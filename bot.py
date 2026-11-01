@@ -15,7 +15,7 @@ from telegram.ext import (
 
 # --- KONFIGURASI BOT ---
 # GANTI PAKAI TOKEN BARU DARI BOTFATHER
-BOT_TOKEN = "8813112237:AAHL20Of8SRq2fmtv3gQyn_1HLn9PXF1QRM"
+BOT_TOKEN = "8800432411:AAELcmFbgzYv1bK1zTLN3ZK2ZTp8VxvWi7k"
 
 # ID Admin (hanya ID ini yang bisa broadcast)
 ADMIN_ID = 7585723733
@@ -290,17 +290,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     keyboard = [
-        [InlineKeyboardButton("?? TXT ➡️ VCF", callback_data='menu_txt_to_vcf')],
-        [InlineKeyboardButton("📇 VCF ➡️ TXT", callback_data='menu_vcf_to_txt')],
-        [InlineKeyboardButton("📊 XLSX ➡️ TXT", callback_data='menu_xlsx_to_txt')],
-        [InlineKeyboardButton("✏️ Edit VCF", callback_data='menu_edit_vcf')],
-        [InlineKeyboardButton("➕ Input Manual", callback_data='menu_manual')],
-        [InlineKeyboardButton("🔗 Gabung VCF", callback_data='menu_merge_vcf')],
-        [InlineKeyboardButton("✂️ Pecah VCF", callback_data='menu_split_vcf')],
-        [InlineKeyboardButton("✂️ Pecah TXT", callback_data='menu_split_txt')],
-        [InlineKeyboardButton("🔍 Cek File (TXT/XLSX)", callback_data='menu_cek_file')],
-        [InlineKeyboardButton("👮‍♂️ 1 File VCF (Admin & Navy)", callback_data='menu_admin_navy')],
-        [InlineKeyboardButton("💰 Donate", callback_data='menu_donate')],
+        [InlineKeyboardButton("?? Konversi", callback_data='cat_konversi')],
+        [InlineKeyboardButton("✏️ Edit & Input", callback_data='cat_edit')],
+        [InlineKeyboardButton("🔗 Gabung & Pecah", callback_data='cat_gabung')],
+        [InlineKeyboardButton("🛠️ Tools", callback_data='cat_tools')],
+        [InlineKeyboardButton("💰 Lainnya", callback_data='cat_lainnya')],
     ]
 
     # Tombol Broadcast hanya muncul untuk Admin
@@ -308,7 +302,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    pesan = "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih menu di bawah ini:"
+    pesan = "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih kategori di bawah ini:"
 
     if update.message:
         await update.message.reply_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
@@ -322,6 +316,93 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
+    # ===== KATEGORI =====
+    if data == 'cat_konversi':
+        keyboard = [
+            [InlineKeyboardButton("📄 TXT → VCF", callback_data='menu_txt_to_vcf')],
+            [InlineKeyboardButton("📇 VCF → TXT", callback_data='menu_vcf_to_txt')],
+            [InlineKeyboardButton("📊 XLSX → TXT", callback_data='menu_xlsx_to_txt')],
+            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
+        ]
+        await query.edit_message_text(
+            "📄 **Konversi**\n\nPilih jenis konversi:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    elif data == 'cat_edit':
+        keyboard = [
+            [InlineKeyboardButton("✏️ Edit VCF", callback_data='menu_edit_vcf')],
+            [InlineKeyboardButton("✍️ Input Manual", callback_data='menu_manual')],
+            [InlineKeyboardButton("👮‍♂️ 1 File VCF (Admin & Navy)", callback_data='menu_admin_navy')],
+            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
+        ]
+        await query.edit_message_text(
+            "✏️ **Edit & Input**\n\nPilih fitur:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    elif data == 'cat_gabung':
+        keyboard = [
+            [InlineKeyboardButton("🔗 Gabung VCF", callback_data='menu_merge_vcf')],
+            [InlineKeyboardButton("✂️ Pecah VCF", callback_data='menu_split_vcf')],
+            [InlineKeyboardButton("📄 Pecah TXT", callback_data='menu_split_txt')],
+            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
+        ]
+        await query.edit_message_text(
+            "🔗 **Gabung & Pecah**\n\nPilih fitur:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    elif data == 'cat_tools':
+        keyboard = [
+            [InlineKeyboardButton("🔍 Cek File (TXT/XLSX)", callback_data='menu_cek_file')],
+            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
+        ]
+        await query.edit_message_text(
+            "🛠️ **Tools**\n\nPilih fitur:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    elif data == 'cat_lainnya':
+        keyboard = [
+            [InlineKeyboardButton("💰 Donate", callback_data='menu_donate')],
+            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
+        ]
+        await query.edit_message_text(
+            "💰 **Lainnya**\n\nPilih menu:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    elif data == 'cat_back':
+        # Kembali ke menu utama
+        keyboard = [
+            [InlineKeyboardButton("📄 Konversi", callback_data='cat_konversi')],
+            [InlineKeyboardButton("✏️ Edit & Input", callback_data='cat_edit')],
+            [InlineKeyboardButton("🔗 Gabung & Pecah", callback_data='cat_gabung')],
+            [InlineKeyboardButton("🛠️ Tools", callback_data='cat_tools')],
+            [InlineKeyboardButton("💰 Lainnya", callback_data='cat_lainnya')],
+        ]
+        if query.from_user.id == ADMIN_ID:
+            keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
+
+        await query.edit_message_text(
+            "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih kategori di bawah ini:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return MENU
+
+    # ===== FITUR ASLI =====
     if data == 'menu_txt_to_vcf':
         await query.edit_message_text("📄 **TXT ke VCF**\n\nSilakan kirim file `.txt` berisi nomor.")
         context.user_data['waiting_for'] = 'txt'
@@ -340,7 +421,7 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     elif data == 'menu_manual':
         context.user_data['manual_data'] = []
-        await query.edit_message_text("➕ **Input Manual**\n\nKetik **Nama Kontak** (contoh: `NAFF`):")
+        await query.edit_message_text("✍️ **Input Manual**\n\nKetik **Nama Kontak** (contoh: `NAFF`):")
         return MANUAL_NAMA
     elif data == 'menu_merge_vcf':
         context.user_data['merge_files'] = []
@@ -352,7 +433,7 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_for'] = 'split'
         return MENU
     elif data == 'menu_split_txt':
-        await query.edit_message_text("✂️ **Pecah TXT**\n\nSilakan kirim file `.txt` yang mau dipecah.")
+        await query.edit_message_text("📄 **Pecah TXT**\n\nSilakan kirim file `.txt` yang mau dipecah.")
         context.user_data['waiting_for'] = 'split_txt'
         return MENU
     elif data == 'menu_cek_file':
@@ -364,7 +445,7 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['waiting_for'] = 'cek_file'
         return MENU
     elif data == 'menu_admin_navy':
-        context.user_data['an_groups'] = []          # list of {"name": str, "numbers": list}
+        context.user_data['an_groups'] = []
         context.user_data['an_current_numbers'] = []
         await query.edit_message_text(
             "👮‍♂️ **1 File VCF (Admin & Navy)**\n\n"
@@ -373,7 +454,6 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADMIN_NAVY_NAMA_GRUP
 
     elif data == 'menu_broadcast':
-        # Double check admin
         if query.from_user.id != ADMIN_ID:
             await query.answer("⛔ Kamu bukan admin!", show_alert=True)
             return MENU
@@ -392,7 +472,6 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return MENU
 
         await query.answer()
-        # Kirim foto QRIS
         with open(qris_path, 'rb') as photo:
             await context.bot.send_photo(
                 chat_id=query.message.chat_id,
@@ -680,7 +759,7 @@ async def an_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(nomor_baru) == 1:
         urutan = total_di_grup
         pesan = (
-            f"✅ Ditambahkan: **{nama_grup} {urutan}** → `+{nomor_baru[0]}`\n"
+            f"✅ Ditambahkan: **{nama_grup} {urutan:03d}** → `+{nomor_baru[0]}`\n"
             f"Total di grup ini: **{total_di_grup}** nomor.\n\n"
             f"Kirim nomor lagi atau ketik `selesai`."
         )
@@ -734,7 +813,8 @@ async def an_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with open(nama_file, 'w', encoding='utf-8') as f:
         for grup in groups:
             for idx, nomor in enumerate(grup['numbers'], start=1):
-                fn = f"{grup['name']} {idx}"
+                # Nomor urut dengan padding 001, 002, dst
+                fn = f"{grup['name']} {idx:03d}"
                 f.write(
                     f"BEGIN:VCARD\n"
                     f"VERSION:3.0\n"
@@ -897,18 +977,21 @@ async def proses_txt_to_vcf(update, context):
 
     for i in range(total_f):
         chunk = nomor_list[i*limit : (i+1)*limit]
-        nama_vcf = f"{context.user_data['nama_file']}_Part{i+1}.vcf"
+        # Nama file: "Testing 1.vcf" (tanpa kata Part)
+        nama_vcf = f"{context.user_data['nama_file']} {i+1}.vcf"
         with open(nama_vcf, 'w', encoding='utf-8') as f:
             for j, n in enumerate(chunk):
+                # Nomor urut dengan padding 001, 002, dst
+                urutan = i * limit + j + 1
                 f.write(
                     f"BEGIN:VCARD\nVERSION:3.0\n"
-                    f"FN:{context.user_data['nama_kontak']} {i*limit+j+1}\n"
+                    f"FN:{context.user_data['nama_kontak']} {urutan:03d}\n"
                     f"TEL;TYPE=CELL:+{n}\nEND:VCARD\n"
                 )
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=open(nama_vcf, 'rb'),
-            caption=f"Part {i+1} ({len(chunk)} kontak)"
+            caption=f"{context.user_data['nama_file']} {i+1} ({len(chunk)} kontak)"
         )
         os.remove(nama_vcf)
 
@@ -1073,7 +1156,7 @@ async def proses_split_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for i in range(total_f):
         chunk = lines[i*limit : (i+1)*limit]
-        txt_name = f"{file_name}_Part{i+1}.txt"
+        txt_name = f"{file_name} {i+1}.txt"
 
         with open(txt_name, 'w') as f:
             f.write("\n".join(chunk))
@@ -1189,7 +1272,7 @@ async def split_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for i in range(total_f):
             chunk = vcards[i*limit : (i+1)*limit]
-            sp_name = f"Split_Part{i+1}.vcf"
+            sp_name = f"Split {i+1}.vcf"
             with open(sp_name, 'w', encoding='utf-8') as f:
                 f.write("\n".join(chunk))
             await context.bot.send_document(
