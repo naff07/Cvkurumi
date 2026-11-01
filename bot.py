@@ -262,6 +262,40 @@ def save_user(user_id: int):
         with open(USERS_FILE, 'a') as f:
             f.write(str(user_id) + "\n")
 
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+    """Tampilkan menu utama (tampilan awal - semua tombol langsung)."""
+    keyboard = [
+        [InlineKeyboardButton("📄 TXT ➡️ VCF", callback_data='menu_txt_to_vcf')],
+        [InlineKeyboardButton("📇 VCF ➡️ TXT", callback_data='menu_vcf_to_txt')],
+        [InlineKeyboardButton("📊 XLSX ➡️ TXT", callback_data='menu_xlsx_to_txt')],
+        [InlineKeyboardButton("✏️ Edit VCF", callback_data='menu_edit_vcf')],
+        [InlineKeyboardButton("➕ Input Manual", callback_data='menu_manual')],
+        [InlineKeyboardButton("🔗 Gabung VCF", callback_data='menu_merge_vcf')],
+        [InlineKeyboardButton("✂️ Pecah VCF", callback_data='menu_split_vcf')],
+        [InlineKeyboardButton("✂️ Pecah TXT", callback_data='menu_split_txt')],
+        [InlineKeyboardButton("🔍 Cek File (TXT/XLSX)", callback_data='menu_cek_file')],
+        [InlineKeyboardButton("👮‍♂️ 1 File VCF (Admin & Navy)", callback_data='menu_admin_navy')],
+        [InlineKeyboardButton("💰 Donate", callback_data='menu_donate')],
+    ]
+    user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
+    if user and user.id == ADMIN_ID:
+        keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    pesan = "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih menu di bawah ini:"
+
+    if edit and update.callback_query:
+        await update.callback_query.edit_message_text(
+            pesan, reply_markup=reply_markup, parse_mode='Markdown'
+        )
+    elif update.message:
+        await update.message.reply_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(
+            pesan, reply_markup=reply_markup, parse_mode='Markdown'
+        )
+    return MENU
+
 # --- MENU UTAMA ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -289,26 +323,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.edit_message_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
         return MENU
 
-    keyboard = [
-        [InlineKeyboardButton("?? Konversi", callback_data='cat_konversi')],
-        [InlineKeyboardButton("✏️ Edit & Input", callback_data='cat_edit')],
-        [InlineKeyboardButton("🔗 Gabung & Pecah", callback_data='cat_gabung')],
-        [InlineKeyboardButton("🛠️ Tools", callback_data='cat_tools')],
-        [InlineKeyboardButton("💰 Lainnya", callback_data='cat_lainnya')],
-    ]
-
-    # Tombol Broadcast hanya muncul untuk Admin
-    if update.effective_user and update.effective_user.id == ADMIN_ID:
-        keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    pesan = "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih kategori di bawah ini:"
-
-    if update.message:
-        await update.message.reply_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
-    else:
-        await update.callback_query.edit_message_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
-    return MENU
+    return await show_main_menu(update, context, edit=bool(update.callback_query))
 
 # --- HANDLER TOMBOL MENU ---
 async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -316,93 +331,6 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # ===== KATEGORI =====
-    if data == 'cat_konversi':
-        keyboard = [
-            [InlineKeyboardButton("📄 TXT → VCF", callback_data='menu_txt_to_vcf')],
-            [InlineKeyboardButton("📇 VCF → TXT", callback_data='menu_vcf_to_txt')],
-            [InlineKeyboardButton("📊 XLSX → TXT", callback_data='menu_xlsx_to_txt')],
-            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
-        ]
-        await query.edit_message_text(
-            "📄 **Konversi**\n\nPilih jenis konversi:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    elif data == 'cat_edit':
-        keyboard = [
-            [InlineKeyboardButton("✏️ Edit VCF", callback_data='menu_edit_vcf')],
-            [InlineKeyboardButton("✍️ Input Manual", callback_data='menu_manual')],
-            [InlineKeyboardButton("👮‍♂️ 1 File VCF (Admin & Navy)", callback_data='menu_admin_navy')],
-            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
-        ]
-        await query.edit_message_text(
-            "✏️ **Edit & Input**\n\nPilih fitur:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    elif data == 'cat_gabung':
-        keyboard = [
-            [InlineKeyboardButton("🔗 Gabung VCF", callback_data='menu_merge_vcf')],
-            [InlineKeyboardButton("✂️ Pecah VCF", callback_data='menu_split_vcf')],
-            [InlineKeyboardButton("📄 Pecah TXT", callback_data='menu_split_txt')],
-            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
-        ]
-        await query.edit_message_text(
-            "🔗 **Gabung & Pecah**\n\nPilih fitur:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    elif data == 'cat_tools':
-        keyboard = [
-            [InlineKeyboardButton("🔍 Cek File (TXT/XLSX)", callback_data='menu_cek_file')],
-            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
-        ]
-        await query.edit_message_text(
-            "🛠️ **Tools**\n\nPilih fitur:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    elif data == 'cat_lainnya':
-        keyboard = [
-            [InlineKeyboardButton("💰 Donate", callback_data='menu_donate')],
-            [InlineKeyboardButton("🔙 Kembali", callback_data='cat_back')],
-        ]
-        await query.edit_message_text(
-            "💰 **Lainnya**\n\nPilih menu:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    elif data == 'cat_back':
-        # Kembali ke menu utama
-        keyboard = [
-            [InlineKeyboardButton("📄 Konversi", callback_data='cat_konversi')],
-            [InlineKeyboardButton("✏️ Edit & Input", callback_data='cat_edit')],
-            [InlineKeyboardButton("🔗 Gabung & Pecah", callback_data='cat_gabung')],
-            [InlineKeyboardButton("🛠️ Tools", callback_data='cat_tools')],
-            [InlineKeyboardButton("💰 Lainnya", callback_data='cat_lainnya')],
-        ]
-        if query.from_user.id == ADMIN_ID:
-            keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
-
-        await query.edit_message_text(
-            "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih kategori di bawah ini:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return MENU
-
-    # ===== FITUR ASLI =====
     if data == 'menu_txt_to_vcf':
         await query.edit_message_text("📄 **TXT ke VCF**\n\nSilakan kirim file `.txt` berisi nomor.")
         context.user_data['waiting_for'] = 'txt'
@@ -662,9 +590,8 @@ async def cek_aksi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     elif query.data == 'cek_kembali':
-        await query.edit_message_text("Ketik /start untuk kembali ke menu utama.")
         context.user_data.clear()
-        return MENU
+        return await show_main_menu(update, context, edit=True)
 
     return MENU
 
@@ -1164,7 +1091,7 @@ async def proses_split_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=open(txt_name, 'rb'),
-            caption=f"✅ Part {i+1} ({len(chunk)} baris)"
+            caption=f"✅ {file_name} {i+1} ({len(chunk)} baris)"
         )
         os.remove(txt_name)
 
@@ -1278,7 +1205,7 @@ async def split_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
                 document=open(sp_name, 'rb'),
-                caption=f"Part {i+1}"
+                caption=f"Split {i+1}"
             )
             os.remove(sp_name)
 
