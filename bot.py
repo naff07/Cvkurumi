@@ -23,6 +23,9 @@ ADMIN_ID = 7585723733
 # File penyimpanan user yang pernah start bot
 USERS_FILE = "users.txt"
 
+# File status force subscribe (on/off)
+FORCE_SUB_FILE = "force_sub.txt"
+
 # ID Supergrup (Buat ngecek member)
 REQUIRED_GROUP_IDS = [-1004421755620, -1003603279803]
 
@@ -262,6 +265,17 @@ def save_user(user_id: int):
         with open(USERS_FILE, 'a') as f:
             f.write(str(user_id) + "\n")
 
+def is_force_sub_enabled() -> bool:
+    """Default ON jika file belum ada."""
+    if not os.path.exists(FORCE_SUB_FILE):
+        return True
+    with open(FORCE_SUB_FILE, 'r') as f:
+        return f.read().strip().lower() != 'off'
+
+def set_force_sub(enabled: bool):
+    with open(FORCE_SUB_FILE, 'w') as f:
+        f.write('on' if enabled else 'off')
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
     """Tampilkan menu utama (tampilan awal - semua tombol langsung)."""
     keyboard = [
@@ -279,6 +293,9 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edi
     ]
     user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
     if user and user.id == ADMIN_ID:
+        status_fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
+        keyboard.append([InlineKeyboardButton(f"⚙️ Force Sub: {status_fs}", callback_data='admin_toggle_forcesub')])
+        keyboard.append([InlineKeyboardButton("👥 Cek User Bot", callback_data='admin_cek_user')])
         keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -304,7 +321,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user:
         save_user(update.effective_user.id)
 
-    belum_join = await is_user_joined(update, context)
+    # Cek force subscribe hanya jika diaktifkan
+    if is_force_sub_enabled():
+        belum_join = await is_user_joined(update, context)
+    else:
+        belum_join = []
+
     if belum_join:
         keyboard = []
         for i, link in enumerate(INVITE_LINKS):
@@ -411,6 +433,45 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ),
                 parse_mode='Markdown'
             )
+        return MENU
+
+    # ===== ADMIN ONLY =====
+    elif data == 'admin_toggle_forcesub':
+        if query.from_user.id != ADMIN_ID:
+            await query.answer("⛔ Kamu bukan admin!", show_alert=True)
+            return MENU
+        current = is_force_sub_enabled()
+        set_force_sub(not current)
+        status = "ON ✅" if not current else "OFF ❌"
+        await query.answer(f"Force Sub sekarang: {status}", show_alert=True)
+        return await show_main_menu(update, context, edit=True)
+
+    elif data == 'admin_cek_user':
+        if query.from_user.id != ADMIN_ID:
+            await query.answer("⛔ Kamu bukan admin!", show_alert=True)
+            return MENU
+        users = load_users()
+        total = len(users)
+        fs_status = "Aktif ✅" if is_force_sub_enabled() else "Nonaktif ❌"
+
+        # Kirim ringkasan + file daftar user
+        await query.answer()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=(
+                f"👥 **Statistik User Bot**\n\n"
+                f"• Total user : `{total}`\n"
+                f"• Force Sub  : {fs_status}\n"
+            ),
+            parse_mode='Markdown'
+        )
+        if total > 0:
+            with open(USERS_FILE, 'rb') as f:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=f,
+                    caption=f"📄 Daftar {total} User ID"
+                )
         return MENU
 
     return MENU
