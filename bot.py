@@ -3,7 +3,9 @@ import os
 import math
 import re
 import csv
+import json
 import asyncio
+from datetime import datetime, timedelta
 import openpyxl
 from collections import Counter
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,7 +19,7 @@ from telegram.ext import (
 # GANTI PAKAI TOKEN BARU DARI BOTFATHER
 BOT_TOKEN = "8813112237:AAHL20Of8SRq2fmtv3gQyn_1HLn9PXF1QRM"
 
-# ID Admin (hanya ID ini yang bisa broadcast)
+# ID Admin (hanya ID ini yang bisa broadcast & kelola akses)
 ADMIN_ID = 7585723733
 
 # File penyimpanan user yang pernah start bot
@@ -25,6 +27,12 @@ USERS_FILE = "users.txt"
 
 # File status force subscribe (on/off)
 FORCE_SUB_FILE = "force_sub.txt"
+
+# File data akses user
+ACCESS_FILE = "access.json"
+
+# Masa trial gratis (hari)
+TRIAL_DAYS = 14
 
 # ID Supergrup (Buat ngecek member)
 REQUIRED_GROUP_IDS = [-1004421755620, -1003603279803]
@@ -276,30 +284,131 @@ def set_force_sub(enabled: bool):
     with open(FORCE_SUB_FILE, 'w') as f:
         f.write('on' if enabled else 'off')
 
+# --- SISTEM AKSES / TRIAL ---
+def load_access() -> dict:
+    if not os.path.exists(ACCESS_FILE):
+        return {}
+    try:
+        with open(ACCESS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_access(data: dict):
+    with open(ACCESS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+def ensure_user_access(user_id: int) -> dict:
+    """Pastikan user punya data akses. User baru/lama dapat trial 14 hari."""
+    data = load_access()
+    key = str(user_id)
+    now = datetime.now()
+
+    if key not in data:
+        # User baru atau belum tercatat → beri trial
+        data[key] = {
+            "joined_at": now.isoformat(),
+            "access_until": (now + timedelta(days=TRIAL_DAYS)).isoformat(),
+            "type": "trial"
+        }
+        save_access(data)
+    return data[key]
+
+def has_access(user_id: int) -> tuple[bool, str]:
+    """Return (boleh_akses, pesan_status). Admin selalu boleh."""
+    if user_id == ADMIN_ID:
+        return True, "Admin ∞"
+
+    info = ensure_user_access(user_id)
+    access_until = info.get("access_until")
+
+    if access_until is None:
+        # Permanent
+        return True, "Permanent ✅"
+
+    try:
+        until = datetime.fromisoformat(access_until)
+    except Exception:
+        return False, "Akses tidak valid"
+
+    now = datetime.now()
+    if now <= until:
+        sisa = (until - now).days
+        tipe = info.get("type", "trial")
+        if tipe == "trial":
+            return True, f"Trial • sisa {sisa} hari"
+        return True, f"Aktif • sisa {sisa} hari"
+
+    return False, "Akses berakhir ❌"
+
+def grant_access(user_id: int, days: int | None = None):
+    """days=None → permanent."""
+    data = load_access()
+    key = str(user_id)
+    now = datetime.now()
+    if key not in data:
+        data[key] = {"joined_at": now.isoformat()}
+
+    if days is None:
+        data[key]["access_until"] = None
+        data[key]["type"] = "permanent"
+    else:
+        data[key]["access_until"] = (now + timedelta(days=days)).isoformat()
+        data[key]["type"] = "granted"
+    save_access(data)
+
+def revoke_access(user_id: int):
+    data = load_access()
+    key = str(user_id)
+    now = datetime.now()
+    if key not in data:
+        data[key] = {"joined_at": now.isoformat()}
+    data[key]["access_until"] = (now - timedelta(days=1)).isoformat()
+    data[key]["type"] = "revoked"
+    save_access(data)
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
-    """Tampilkan menu utama (tampilan awal - semua tombol langsung)."""
-    keyboard = [
-        [InlineKeyboardButton("📄 TXT ➡️ VCF", callback_data='menu_txt_to_vcf')],
-        [InlineKeyboardButton("📇 VCF ➡️ TXT", callback_data='menu_vcf_to_txt')],
-        [InlineKeyboardButton("📊 XLSX ➡️ TXT", callback_data='menu_xlsx_to_txt')],
-        [InlineKeyboardButton("✏️ Edit VCF", callback_data='menu_edit_vcf')],
-        [InlineKeyboardButton("➕ Input Manual", callback_data='menu_manual')],
-        [InlineKeyboardButton("🔗 Gabung VCF", callback_data='menu_merge_vcf')],
-        [InlineKeyboardButton("✂️ Pecah VCF", callback_data='menu_split_vcf')],
-        [InlineKeyboardButton("✂️ Pecah TXT", callback_data='menu_split_txt')],
-        [InlineKeyboardButton("🔍 Cek File (TXT/XLSX)", callback_data='menu_cek_file')],
-        [InlineKeyboardButton("👮‍♂️ 1 File VCF (Admin & Navy)", callback_data='menu_admin_navy')],
-        [InlineKeyboardButton("💰 Donate", callback_data='menu_donate')],
-    ]
+    """Tampilkan menu utama (premium look, tanpa folder)."""
     user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
+    uid = user.id if user else 0
+
+    # Pastikan data akses ada
+    if uid:
+        ensure_user_access(uid)
+        ok, status_akses = has_access(uid)
+    else:
+        ok, status_akses = True, ""
+
+    keyboard = [
+        [InlineKeyboardButton("📄 TXT  →  VCF", callback_data='menu_txt_to_vcf')],
+        [InlineKeyboardButton("📇 VCF  →  TXT", callback_data='menu_vcf_to_txt')],
+        [InlineKeyboardButton("📊 XLSX →  TXT", callback_data='menu_xlsx_to_txt')],
+        [InlineKeyboardButton("✏️  Edit VCF", callback_data='menu_edit_vcf')],
+        [InlineKeyboardButton("✍️  Input Manual", callback_data='menu_manual')],
+        [InlineKeyboardButton("🔗  Gabung VCF", callback_data='menu_merge_vcf')],
+        [InlineKeyboardButton("✂️  Pecah VCF", callback_data='menu_split_vcf')],
+        [InlineKeyboardButton("📄  Pecah TXT", callback_data='menu_split_txt')],
+        [InlineKeyboardButton("🔍  Cek File", callback_data='menu_cek_file')],
+        [InlineKeyboardButton("👮‍♂️  Admin & Navy VCF", callback_data='menu_admin_navy')],
+        [InlineKeyboardButton("💎  Donate", callback_data='menu_donate')],
+    ]
     if user and user.id == ADMIN_ID:
         status_fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
         keyboard.append([InlineKeyboardButton(f"⚙️ Force Sub: {status_fs}", callback_data='admin_toggle_forcesub')])
         keyboard.append([InlineKeyboardButton("👥 Cek User Bot", callback_data='admin_cek_user')])
-        keyboard.append([InlineKeyboardButton("📢 Broadcast (Admin)", callback_data='menu_broadcast')])
+        keyboard.append([InlineKeyboardButton("📢 Broadcast", callback_data='menu_broadcast')])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    pesan = "Halo bray! Selamat datang di **CV Kurumi** 🦄.\nSilakan pilih menu di bawah ini:"
+
+    nama = user.first_name if user else "User"
+    pesan = (
+        f"✨ **CV Kurumi Premium**\n"
+        f"─────────────────\n"
+        f"Halo, **{nama}**!\n"
+        f"Status akses: `{status_akses}`\n"
+        f"─────────────────\n"
+        f"Pilih menu di bawah untuk mulai."
+    )
 
     if edit and update.callback_query:
         await update.callback_query.edit_message_text(
@@ -320,6 +429,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Simpan user yang start bot (untuk broadcast)
     if update.effective_user:
         save_user(update.effective_user.id)
+        ensure_user_access(update.effective_user.id)
 
     # Cek force subscribe hanya jika diaktifkan
     if is_force_sub_enabled():
@@ -334,9 +444,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         pesan = (
-            "⚠️ **Wajib Join Dulu Bray!**\n\n"
-            "Sebelum pakai bot **CV Kurumi**, kamu harus join grup/channel di bawah ini.\n"
-            "Setelah join, klik /start lagi ya."
+            "⚠️ **Wajib Join Dulu**\n\n"
+            "Sebelum memakai **CV Kurumi Premium**, kamu harus join grup/channel di bawah ini.\n"
+            "Setelah join, klik /start lagi."
         )
 
         if update.message:
@@ -352,6 +462,23 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    uid = query.from_user.id
+
+    # Fitur admin tidak dicek akses
+    admin_only = data.startswith('admin_') or data == 'menu_broadcast'
+
+    # Cek akses untuk fitur biasa
+    if not admin_only and data.startswith('menu_'):
+        ok, status = has_access(uid)
+        if not ok:
+            await query.edit_message_text(
+                f"🔒 **Akses Berakhir**\n\n"
+                f"Masa trial / akses kamu sudah habis.\n"
+                f"Hubungi admin untuk perpanjang akses.\n\n"
+                f"Status: `{status}`",
+                parse_mode='Markdown'
+            )
+            return MENU
 
     if data == 'menu_txt_to_vcf':
         await query.edit_message_text("📄 **TXT ke VCF**\n\nSilakan kirim file `.txt` berisi nomor.")
@@ -1282,17 +1409,112 @@ async def split_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- CANCEL & FALLBACK ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Dibatalkan. Ketik /start buat balik ke menu **CV Kurumi**.")
+    await update.message.reply_text("❌ Dibatalkan. Ketik /start untuk kembali ke menu.")
     context.user_data.clear()
     return ConversationHandler.END
 
 async def fallback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Perintah tidak dikenali. Ketik /start buat balik ke menu **CV Kurumi**.")
+    await update.message.reply_text("❓ Perintah tidak dikenali. Ketik /start untuk kembali ke menu.")
     return ConversationHandler.END
+
+# --- ADMIN: KELOLA AKSES ---
+async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Hanya admin.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "Format:\n"
+            "`/grant <user_id>` → permanent\n"
+            "`/grant <user_id> <hari>` → berapa hari\n\n"
+            "Contoh:\n`/grant 123456789`\n`/grant 123456789 30`",
+            parse_mode='Markdown'
+        )
+        return
+    try:
+        target = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus angka.")
+        return
+    days = None
+    if len(args) >= 2:
+        try:
+            days = int(args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Jumlah hari harus angka.")
+            return
+    grant_access(target, days)
+    if days is None:
+        msg = f"✅ User `{target}` diberi akses **permanent**."
+    else:
+        msg = f"✅ User `{target}` diberi akses **{days} hari**."
+    await update.message.reply_text(msg, parse_mode='Markdown')
+    try:
+        await context.bot.send_message(
+            target,
+            f"🎉 Akses kamu telah diperpanjang oleh admin.\n"
+            f"{'Permanent' if days is None else f'{days} hari'}.\n"
+            f"Ketik /start untuk mulai."
+        )
+    except Exception:
+        pass
+
+async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Hanya admin.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Format: `/revoke <user_id>`", parse_mode='Markdown')
+        return
+    try:
+        target = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus angka.")
+        return
+    revoke_access(target)
+    await update.message.reply_text(f"✅ Akses user `{target}` telah dicabut.", parse_mode='Markdown')
+    try:
+        await context.bot.send_message(target, "🔒 Akses kamu telah dicabut oleh admin.")
+    except Exception:
+        pass
+
+async def cmd_cekakses(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        # User biasa bisa cek status sendiri
+        ok, status = has_access(update.effective_user.id)
+        await update.message.reply_text(f"Status akses kamu: `{status}`", parse_mode='Markdown')
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Format: `/cekakses <user_id>`", parse_mode='Markdown')
+        return
+    try:
+        target = int(args[0])
+    except ValueError:
+        await update.message.reply_text("❌ User ID harus angka.")
+        return
+    ensure_user_access(target)
+    ok, status = has_access(target)
+    info = load_access().get(str(target), {})
+    await update.message.reply_text(
+        f"👤 User: `{target}`\n"
+        f"Status: `{status}`\n"
+        f"Tipe: `{info.get('type', '-')}`\n"
+        f"Join: `{info.get('joined_at', '-')[:10]}`\n"
+        f"Until: `{info.get('access_until') or 'Permanent'}`",
+        parse_mode='Markdown'
+    )
 
 # --- MAIN ---
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+
+    # Admin access commands (di luar conversation)
+    app.add_handler(CommandHandler("grant", cmd_grant))
+    app.add_handler(CommandHandler("revoke", cmd_revoke))
+    app.add_handler(CommandHandler("cekakses", cmd_cekakses))
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
