@@ -1596,9 +1596,9 @@ def main():
         entry_points=[CommandHandler("start", start)],
         states={
             MENU: [
-                CallbackQueryHandler(menu_pilihan),
                 CallbackQueryHandler(manual_aksi, pattern='^manual_'),
                 CallbackQueryHandler(cek_aksi, pattern='^cek_'),
+                CallbackQueryHandler(menu_pilihan),
                 MessageHandler(filters.Document.ALL, handle_file),
             ],
             TXT_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, txt_nama_file)],
