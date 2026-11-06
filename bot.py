@@ -55,7 +55,7 @@ logging.basicConfig(
     MANUAL_NAMA, MANUAL_NOMOR,
     MERGE_FILE,
     SPLIT_LIMIT,
-    EDIT_NAMA, EDIT_PREFIX,
+    EDIT_NAMA, EDIT_PREFIX, EDIT_FILENAME,
     TXT_SPLIT_LIMIT,
     # Fitur Admin & Navy
     ADMIN_NAVY_NAMA_GRUP,
@@ -64,7 +64,7 @@ logging.basicConfig(
     ADMIN_NAVY_FILE_NAME,
     # Fitur Broadcast
     BROADCAST_MESSAGE,
-) = range(16)
+) = range(17)
 
 # Kamus kode negara (lengkap)
 COUNTRY_CODES = {
@@ -1118,23 +1118,52 @@ async def proses_txt_to_vcf(update, context):
 
 # --- INPUT MANUAL ---
 async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['temp_nama'] = update.message.text
-    await update.message.reply_text("Ketik **Nomor HP** (contoh: `628123456789`):")
+    context.user_data['temp_nama'] = update.message.text.strip()
+    await update.message.reply_text(
+        f"✅ Nama dasar: **{context.user_data['temp_nama']}**\n\n"
+        f"Sekarang kirim nomor.\n"
+        f"• Bisa 1 nomor\n"
+        f"• Bisa banyak nomor sekaligus (pisah spasi / baris baru)\n\n"
+        f"Contoh:\n`628111111111`\natau\n`628111 628222 628333`\n\n"
+        f"Nomor akan otomatis jadi:\n"
+        f"`{context.user_data['temp_nama']} 001`, `002`, dst.",
+        parse_mode='Markdown'
+    )
     return MANUAL_NOMOR
 
 async def manual_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nomor = ''.join(filter(str.isdigit, update.message.text))
-    nama = context.user_data['temp_nama']
+    text = update.message.text.strip()
+    potongan = re.split(r'[\s,;]+', text)
+    nomor_baru = []
+    for p in potongan:
+        n = ''.join(filter(str.isdigit, p))
+        if len(n) >= 8:
+            nomor_baru.append(n)
 
-    context.user_data['manual_data'].append((nama, nomor))
+    if not nomor_baru:
+        await update.message.reply_text(
+            "❌ Tidak ada nomor valid.\nKirim nomor (bisa banyak sekaligus)."
+        )
+        return MANUAL_NOMOR
 
+    nama_dasar = context.user_data['temp_nama']
+    if 'manual_data' not in context.user_data:
+        context.user_data['manual_data'] = []
+
+    for n in nomor_baru:
+        context.user_data['manual_data'].append(n)
+
+    total = len(context.user_data['manual_data'])
     keyboard = [
-        [InlineKeyboardButton("➕ Tambah Lagi", callback_data='manual_lagi')],
+        [InlineKeyboardButton("➕ Tambah Nomor Lagi", callback_data='manual_lagi')],
         [InlineKeyboardButton("✅ Selesai & Simpan", callback_data='manual_selesai')]
     ]
     await update.message.reply_text(
-        f"✅ {nama} ({nomor}) ditambahkan.\nTotal: {len(context.user_data['manual_data'])} kontak.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        f"✅ Berhasil menambah **{len(nomor_baru)}** nomor.\n"
+        f"Total kontak: **{total}**\n"
+        f"Nama: `{nama_dasar} 001` … `{nama_dasar} {total:03d}`",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
     )
     return MENU
 
@@ -1143,26 +1172,42 @@ async def manual_aksi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == 'manual_lagi':
-        await query.edit_message_text("Ketik **Nama Kontak** lagi:")
-        return MANUAL_NAMA
+        await query.edit_message_text(
+            "Kirim nomor lagi (bisa banyak sekaligus):"
+        )
+        return MANUAL_NOMOR
     elif query.data == 'manual_selesai':
-        await query.edit_message_text("⏳ Memproses file VCF Manual...")
-        vcf_name = "Manual.vcf"
+        numbers = context.user_data.get('manual_data', [])
+        if not numbers:
+            await query.edit_message_text("❌ Belum ada nomor. Ketik /start ulang.")
+            return MENU
+
+        nama_dasar = context.user_data.get('temp_nama', 'Kontak')
+        await query.edit_message_text("⏳ Membuat file VCF...")
+
+        vcf_name = f"{nama_dasar}.vcf"
+        vcf_name = re.sub(r'[\\/*?:"<>|]', '', vcf_name)
+        if not vcf_name.endswith('.vcf'):
+            vcf_name += '.vcf'
+
         with open(vcf_name, 'w', encoding='utf-8') as f:
-            for nama, nomor in context.user_data['manual_data']:
+            for idx, nomor in enumerate(numbers, start=1):
+                fn = f"{nama_dasar} {idx:03d}"
                 f.write(
                     f"BEGIN:VCARD\nVERSION:3.0\n"
-                    f"FN:{nama}\nTEL;TYPE=CELL:+{nomor}\nEND:VCARD\n"
+                    f"FN:{fn}\nTEL;TYPE=CELL:+{nomor}\nEND:VCARD\n"
                 )
+
         await context.bot.send_document(
             chat_id=query.message.chat_id,
             document=open(vcf_name, 'rb'),
-            caption="File VCF Manual"
+            caption=f"✅ {len(numbers)} kontak • `{vcf_name}`",
+            parse_mode='Markdown'
         )
         os.remove(vcf_name)
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
+            text="🎉 Selesai! Ketik /start untuk menu lagi."
         )
         context.user_data.clear()
         return MENU
@@ -1326,13 +1371,29 @@ async def merge_selesai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- EDIT VCF ---
 async def edit_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nama_baru'] = update.message.text
-    await update.message.reply_text("Mau ganti prefix nomor? (Ketik `62` atau `tidak`):")
+    text = update.message.text.strip()
+    if text.lower() == 'tidak':
+        context.user_data['nama_baru'] = None  # skip ganti nama
+    else:
+        context.user_data['nama_baru'] = text
+    await update.message.reply_text(
+        "Mau ganti prefix nomor?\n"
+        "Ketik kode negara (contoh: `62`) atau ketik `tidak`:"
+    )
     return EDIT_PREFIX
 
 async def edit_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    prefix = update.message.text.lower()
+    context.user_data['edit_prefix'] = update.message.text.strip().lower()
+    await update.message.reply_text(
+        "📝 Ketik **Nama File** baru (tanpa .vcf)\n"
+        "Atau ketik `tidak` untuk pakai nama default."
+    )
+    return EDIT_FILENAME
+
+async def edit_filename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
     file_id = context.user_data['file_id']
+    original_name = context.user_data.get('file_name', 'Edited.vcf')
 
     file = await context.bot.get_file(file_id)
     path = f"temp_{file_id}.vcf"
@@ -1341,8 +1402,13 @@ async def edit_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
         content = f.read()
     os.remove(path)
 
-    content = re.sub(r'FN:.*', f'FN:{context.user_data["nama_baru"]}', content)
+    # Ganti nama kontak
+    nama_baru = context.user_data.get('nama_baru')
+    if nama_baru:
+        content = re.sub(r'FN:.*', f'FN:{nama_baru}', content)
 
+    # Ganti prefix
+    prefix = context.user_data.get('edit_prefix', 'tidak')
     if prefix != 'tidak':
         def rep(m):
             n = m.group(1)
@@ -1351,20 +1417,30 @@ async def edit_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return f":+{prefix}{n}"
         content = re.sub(r':(.*)', rep, content)
 
-    nama_baru_vcf = f"Edited_{context.user_data['file_name']}"
+    # Nama file
+    if text.lower() == 'tidak':
+        nama_baru_vcf = f"Edited_{original_name}"
+        if not nama_baru_vcf.endswith('.vcf'):
+            nama_baru_vcf += '.vcf'
+    else:
+        nama_baru_vcf = re.sub(r'[\\/*?:"<>|]', '', text)
+        if not nama_baru_vcf.endswith('.vcf'):
+            nama_baru_vcf += '.vcf'
+
     with open(nama_baru_vcf, 'w', encoding='utf-8') as f:
         f.write(content)
 
     await context.bot.send_document(
         chat_id=update.effective_chat.id,
         document=open(nama_baru_vcf, 'rb'),
-        caption="File VCF Diedit"
+        caption=f"✅ File VCF Diedit\n📁 `{nama_baru_vcf}`",
+        parse_mode='Markdown'
     )
     os.remove(nama_baru_vcf)
 
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
+        text="🎉 Selesai! Ketik /start untuk menu lagi."
     )
     context.user_data.clear()
     return MENU
@@ -1536,6 +1612,7 @@ def main():
             ],
             EDIT_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_nama)],
             EDIT_PREFIX: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_prefix)],
+            EDIT_FILENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_filename)],
             SPLIT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, split_vcf)],
             TXT_SPLIT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, proses_split_txt)],
             # Fitur Admin & Navy
