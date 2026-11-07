@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
     # /admin (Admin & Navy)
     ADMIN_NAMA_GRUP, ADMIN_NOMOR, ADMIN_PILIH, ADMIN_NAMA_FILE,
     # /manual
-    MANUAL_NAMA, MANUAL_NOMOR,
+    MANUAL_NOMOR, MANUAL_NAMA, MANUAL_NAMA_FILE,
     # /add
     ADD_FILE, ADD_NOMOR,
     # /delete
@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
     GETCONTEN_FILE,
     # broadcast
     BROADCAST_MESSAGE,
-) = range(32)
+) = range(33)
 
 # =========================================================
 # KODE NEGARA
@@ -146,17 +146,34 @@ COUNTRY_CODES = {
 # =========================================================
 # HELPER
 # =========================================================
-def load_users() -> set:
+def load_users() -> dict:
+    """Return dict {user_id: username}"""
+    result = {}
     if not os.path.exists(USERS_FILE):
-        return set()
-    with open(USERS_FILE, "r") as f:
-        return {int(line.strip()) for line in f if line.strip().isdigit()}
+        return result
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split("|", 1)
+            try:
+                uid = int(parts[0])
+                uname = parts[1] if len(parts) > 1 else "-"
+                result[uid] = uname
+            except ValueError:
+                continue
+    return result
 
-def save_user(user_id: int):
+def save_user(user_id: int, username: str | None = None):
     users = load_users()
-    if user_id not in users:
-        with open(USERS_FILE, "a") as f:
-            f.write(f"{user_id}\n")
+    uname = (username or "-").lstrip("@") or "-"
+    # Update if new or username changed
+    if user_id not in users or users[user_id] != uname:
+        users[user_id] = uname
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            for uid, name in sorted(users.items()):
+                f.write(f"{uid}|{name}\n")
 
 def is_force_sub_enabled() -> bool:
     if not os.path.exists(FORCE_SUB_FILE):
@@ -395,7 +412,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     user = update.effective_user
     if user:
-        save_user(user.id)
+        save_user(user.id, user.username)
         ensure_user_access(user.id)
 
     if is_force_sub_enabled():
@@ -453,9 +470,11 @@ async def cmd_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["manual_data"] = []
     await update.message.reply_text(
         "✍️ **Input Manual** (`/manual`)\n\n"
-        "Ketik **Nama Kontak** (contoh: `NAFF`):"
+        "Kirim **nomor** terlebih dahulu (bisa banyak sekaligus).\n"
+        "Contoh:\n`628111111111`\natau\n`628111 628222 628333`\n\n"
+        "Kalau sudah cukup, ketik `selesai`."
     )
-    return MANUAL_NAMA
+    return MANUAL_NOMOR
 
 async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await require_access(update, context):
@@ -821,64 +840,90 @@ async def proses_to_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # --- MANUAL ---
-async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["temp_nama"] = update.message.text.strip()
-    await update.message.reply_text(
-        f"✅ Nama dasar: **{context.user_data['temp_nama']}**\n\n"
-        "Kirim nomor (bisa banyak sekaligus):",
-        parse_mode="Markdown"
-    )
-    return MANUAL_NOMOR
+# Alur baru: nomor dulu → ketik "selesai" → nama kontak → nama file → buat VCF
 
 async def manual_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+
+    # User ketik selesai → lanjut ke nama kontak
+    if text.lower() == "selesai":
+        numbers = context.user_data.get("manual_data", [])
+        if not numbers:
+            await update.message.reply_text("❌ Belum ada nomor. Kirim minimal 1 nomor dulu.")
+            return MANUAL_NOMOR
+        await update.message.reply_text(
+            f"✅ Total **{len(numbers)}** nomor tersimpan.\n\n"
+            "Sekarang ketik **Nama Kontak** (contoh: `NAFF`):",
+            parse_mode="Markdown"
+        )
+        return MANUAL_NAMA
+
+    # Tambah nomor
     baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
     if not baru:
-        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        await update.message.reply_text(
+            "❌ Tidak ada nomor valid.\n"
+            "Kirim nomor (bisa banyak) atau ketik `selesai`."
+        )
         return MANUAL_NOMOR
 
     context.user_data.setdefault("manual_data", []).extend(baru)
     total = len(context.user_data["manual_data"])
-    kb = [
-        [InlineKeyboardButton("➕ Tambah Lagi", callback_data="manual_lagi")],
-        [InlineKeyboardButton("✅ Selesai & Simpan", callback_data="manual_selesai")]
-    ]
     await update.message.reply_text(
-        f"✅ Ditambah {len(baru)} nomor. Total: **{total}**",
-        reply_markup=InlineKeyboardMarkup(kb),
+        f"✅ Ditambah **{len(baru)}** nomor. Total di sini: **{total}**\n"
+        "Kirim lagi atau ketik `selesai`.",
         parse_mode="Markdown"
     )
-    return MENU
+    return MANUAL_NOMOR
 
-async def manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "manual_lagi":
-        await query.edit_message_text("Kirim nomor lagi:")
-        return MANUAL_NOMOR
-    if query.data == "manual_selesai":
-        numbers = context.user_data.get("manual_data", [])
-        if not numbers:
-            await query.edit_message_text("❌ Belum ada nomor.")
-            return MENU
-        nama = context.user_data.get("temp_nama", "Kontak")
-        out = safe_filename(f"{nama}.vcf")
-        with open(out, "w", encoding="utf-8") as f:
-            for i, n in enumerate(numbers, 1):
-                f.write(
-                    f"BEGIN:VCARD\nVERSION:3.0\n"
-                    f"FN:{nama} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
-                )
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=open(out, "rb"),
-            caption=f"✅ {len(numbers)} kontak • `{out}`",
-            parse_mode="Markdown"
-        )
-        os.remove(out)
-        await context.bot.send_message(query.message.chat_id, "🎉 Selesai! Ketik /start.")
+async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama = update.message.text.strip()
+    if not nama:
+        await update.message.reply_text("❌ Nama kontak tidak boleh kosong.")
+        return MANUAL_NAMA
+    context.user_data["temp_nama"] = nama
+    await update.message.reply_text(
+        f"✅ Nama kontak: **{nama}**\n\n"
+        "Sekarang ketik **Nama File** (tanpa .vcf)\n"
+        "Contoh: `Kontak_NAFF`",
+        parse_mode="Markdown"
+    )
+    return MANUAL_NAMA_FILE
+
+async def manual_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama_file = safe_filename(update.message.text.strip())
+    if not nama_file:
+        await update.message.reply_text("❌ Nama file tidak boleh kosong.")
+        return MANUAL_NAMA_FILE
+
+    numbers = context.user_data.get("manual_data", [])
+    nama = context.user_data.get("temp_nama", "Kontak")
+    if not numbers:
+        await update.message.reply_text("❌ Data nomor hilang. Ketik /manual ulang.")
         context.user_data.clear()
         return MENU
+
+    if not nama_file.lower().endswith(".vcf"):
+        nama_file += ".vcf"
+
+    await update.message.reply_text("⏳ Membuat file VCF...")
+
+    with open(nama_file, "w", encoding="utf-8") as f:
+        for i, n in enumerate(numbers, 1):
+            f.write(
+                f"BEGIN:VCARD\nVERSION:3.0\n"
+                f"FN:{nama} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
+            )
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(nama_file, "rb"),
+        caption=f"✅ {len(numbers)} kontak • `{nama_file}`",
+        parse_mode="Markdown"
+    )
+    os.remove(nama_file)
+    await update.message.reply_text("🎉 Selesai! Ketik /start untuk menu lagi.")
+    context.user_data.clear()
     return MENU
 
 # --- ADD ---
@@ -1421,21 +1466,28 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await show_menu(update, context, edit=True)
 
     if query.data == "admin_cek_user":
-        users = load_users()
+        users = load_users()  # {id: username}
         total = len(users)
         fs = "Aktif ✅" if is_force_sub_enabled() else "Nonaktif ❌"
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=f"👥 **Statistik User**\n\n• Total user : `{total}`\n• Force Sub  : {fs}",
+            text=f"👥 **Statistik User Bot**\n\n• Total user : `{total}`\n• Force Sub  : {fs}",
             parse_mode="Markdown"
         )
         if total > 0:
-            with open(USERS_FILE, "rb") as f:
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=f,
-                    caption=f"📄 Daftar {total} User ID"
-                )
+            # Buat file daftar id + username
+            lines = ["user_id | username"]
+            for uid, uname in sorted(users.items()):
+                lines.append(f"{uid} | @{uname}" if uname != "-" else f"{uid} | -")
+            list_file = "daftar_user.txt"
+            with open(list_file, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            await context.bot.send_document(
+                chat_id=query.message.chat_id,
+                document=open(list_file, "rb"),
+                caption=f"📄 Daftar {total} User (ID + Username)"
+            )
+            os.remove(list_file)
         return MENU
 
     if query.data == "admin_broadcast":
@@ -1453,7 +1505,8 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
 
     pesan = update.message.text
-    users = list(load_users())
+    users_dict = load_users()  # {id: username}
+    users = list(users_dict.keys())
     if not users:
         await update.message.reply_text("❌ Belum ada user.")
         return MENU
@@ -1496,10 +1549,12 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
     if blocked:
-        remaining = [u for u in users if u not in blocked]
-        with open(USERS_FILE, "w") as f:
-            for u in remaining:
-                f.write(f"{u}\n")
+        # Hapus user yang block dari daftar
+        for uid in blocked:
+            users_dict.pop(uid, None)
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            for uid, name in sorted(users_dict.items()):
+                f.write(f"{uid}|{name}\n")
 
     await update.message.reply_text(
         f"✅ **Broadcast selesai!**\n\n"
@@ -1699,7 +1754,6 @@ def main():
         ],
         states={
             MENU: [
-                CallbackQueryHandler(manual_callback, pattern="^manual_"),
                 CallbackQueryHandler(admin_callback, pattern="^admin_"),
                 CallbackQueryHandler(admin_pilih, pattern="^an_"),
                 MessageHandler(filters.Document.ALL, handle_document),
@@ -1716,9 +1770,10 @@ def main():
             ADMIN_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nomor)],
             ADMIN_PILIH: [CallbackQueryHandler(admin_pilih, pattern="^an_")],
             ADMIN_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nama_file)],
-            # manual
-            MANUAL_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nama)],
+            # manual (nomor → nama kontak → nama file)
             MANUAL_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nomor)],
+            MANUAL_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nama)],
+            MANUAL_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nama_file)],
             # add
             ADD_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
             ADD_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_nomor)],
