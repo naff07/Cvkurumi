@@ -6,8 +6,9 @@ import csv
 import json
 import asyncio
 from datetime import datetime, timedelta
-import openpyxl
 from collections import Counter
+
+import openpyxl
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import Forbidden, BadRequest, RetryAfter
 from telegram.ext import (
@@ -15,297 +16,176 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler
 )
 
-# --- KONFIGURASI BOT ---
-# GANTI PAKAI TOKEN BARU DARI BOTFATHER
+# =========================================================
+# KONFIGURASI
+# =========================================================
 BOT_TOKEN = "8813112237:AAHL20Of8SRq2fmtv3gQyn_1HLn9PXF1QRM"
-
-# ID Admin (hanya ID ini yang bisa broadcast & kelola akses)
 ADMIN_ID = 7585723733
 
-# File penyimpanan user yang pernah start bot
 USERS_FILE = "users.txt"
-
-# File status force subscribe (on/off)
 FORCE_SUB_FILE = "force_sub.txt"
-
-# File data akses user
 ACCESS_FILE = "access.json"
-
-# Masa trial gratis (hari)
 TRIAL_DAYS = 14
 
-# ID Supergrup (Buat ngecek member)
 REQUIRED_GROUP_IDS = [-1004421755620, -1003603279803]
-
-# Link Undangan (Buat tombol Join)
 INVITE_LINKS = [
     "https://t.me/+wNHEBfYPBMBjNzdl",
     "https://t.me/kurumimybini"
 ]
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
-# --- STATE UNTUK CONVERSATION HANDLER ---
+# =========================================================
+# STATE
+# =========================================================
 (
     MENU,
-    TXT_NAMA_FILE, TXT_NAMA_KONTAK, TXT_LIMIT,
+    # /to_vcf
+    TO_VCF_FILE, TO_VCF_NAMA_FILE, TO_VCF_NAMA_KONTAK, TO_VCF_LIMIT,
+    # /to_txt
+    TO_TXT_FILE,
+    # /admin (Admin & Navy)
+    ADMIN_NAMA_GRUP, ADMIN_NOMOR, ADMIN_PILIH, ADMIN_NAMA_FILE,
+    # /manual
     MANUAL_NAMA, MANUAL_NOMOR,
+    # /add
+    ADD_FILE, ADD_NOMOR,
+    # /delete
+    DELETE_FILE, DELETE_NOMOR,
+    # /renamectc
+    RENAME_CTC_FILE, RENAME_CTC_NAMA,
+    # /renamefile
+    RENAME_FILE, RENAME_FILE_NEW,
+    # /merge
     MERGE_FILE,
-    SPLIT_LIMIT,
-    EDIT_NAMA, EDIT_PREFIX, EDIT_FILENAME,
-    TXT_SPLIT_LIMIT,
-    # Fitur Admin & Navy
-    ADMIN_NAVY_NAMA_GRUP,
-    ADMIN_NAVY_NOMOR,
-    ADMIN_NAVY_PILIH,
-    ADMIN_NAVY_FILE_NAME,
-    # Fitur Broadcast
+    # /split
+    SPLIT_FILE, SPLIT_LIMIT,
+    # /count
+    COUNT_FILE,
+    # /nodup
+    NODUP_FILE,
+    # /getname
+    GETNAME_FILE,
+    # /generate
+    GENERATE_NAMA, GENERATE_JUMLAH,
+    # /getconten
+    GETCONTEN_FILE,
+    # broadcast
     BROADCAST_MESSAGE,
-) = range(17)
+) = range(32)
 
-# Kamus kode negara (lengkap)
+# =========================================================
+# KODE NEGARA
+# =========================================================
 COUNTRY_CODES = {
-    # Asia Tenggara
-    "62": "Indonesia 🇮🇩",
-    "60": "Malaysia 🇲🇾",
-    "65": "Singapore 🇸🇬",
-    "66": "Thailand 🇹🇭",
-    "84": "Vietnam 🇻🇳",
-    "63": "Philippines 🇵🇭",
-    "855": "Cambodia 🇰🇭",
-    "856": "Laos 🇱🇦",
-    "95": "Myanmar 🇲🇲",
-    "673": "Brunei 🇧🇳",
-    "670": "Timor-Leste 🇹🇱",
-    # Asia Selatan
-    "91": "India 🇮🇳",
-    "92": "Pakistan 🇵🇰",
-    "880": "Bangladesh 🇧🇩",
-    "94": "Sri Lanka 🇱🇰",
-    "977": "Nepal 🇳🇵",
-    "975": "Bhutan 🇧🇹",
-    "960": "Maldives 🇲🇻",
-    "93": "Afghanistan 🇦🇫",
-    # Asia Timur
-    "86": "China 🇨🇳",
-    "81": "Japan 🇯🇵",
-    "82": "South Korea 🇰🇷",
-    "850": "North Korea 🇰🇵",
-    "886": "Taiwan 🇹🇼",
-    "852": "Hong Kong 🇭🇰",
-    "853": "Macau 🇲🇴",
-    "976": "Mongolia 🇲🇳",
-    # Timur Tengah
-    "971": "UAE 🇦🇪",
-    "966": "Saudi Arabia 🇸🇦",
-    "974": "Qatar 🇶🇦",
-    "965": "Kuwait 🇰🇼",
-    "968": "Oman 🇴🇲",
-    "973": "Bahrain 🇧🇭",
-    "962": "Jordan 🇯🇴",
-    "961": "Lebanon 🇱🇧",
-    "963": "Syria 🇸🇾",
-    "964": "Iraq 🇮🇶",
-    "98": "Iran 🇮🇷",
-    "972": "Israel 🇮🇱",
-    "970": "Palestine 🇵🇸",
-    "967": "Yemen 🇾🇪",
-    "90": "Turkey 🇹🇷",
-    "994": "Azerbaijan 🇦🇿",
-    "995": "Georgia 🇬🇪",
-    "374": "Armenia 🇦🇲",
-    # Eropa
-    "44": "United Kingdom 🇬🇧",
-    "33": "France 🇫🇷",
-    "49": "Germany 🇩🇪",
-    "39": "Italy 🇮🇹",
-    "34": "Spain 🇪🇸",
-    "31": "Netherlands 🇳🇱",
-    "32": "Belgium 🇧🇪",
-    "41": "Switzerland 🇨🇭",
-    "43": "Austria 🇦🇹",
-    "46": "Sweden 🇸🇪",
-    "47": "Norway 🇳🇴",
-    "45": "Denmark 🇩🇰",
-    "358": "Finland 🇫🇮",
-    "48": "Poland 🇵🇱",
-    "420": "Czech Republic 🇨🇿",
-    "36": "Hungary 🇭🇺",
-    "40": "Romania 🇷🇴",
-    "359": "Bulgaria 🇧🇬",
-    "30": "Greece 🇬🇷",
-    "351": "Portugal 🇵🇹",
-    "353": "Ireland 🇮🇪",
-    "7": "Russia 🇷🇺",
-    "380": "Ukraine 🇺🇦",
-    "375": "Belarus 🇧🇾",
-    "370": "Lithuania 🇱🇹",
-    "371": "Latvia 🇱🇻",
-    "372": "Estonia 🇪🇪",
-    "385": "Croatia 🇭🇷",
-    "381": "Serbia 🇷🇸",
-    "387": "Bosnia 🇧🇦",
-    "382": "Montenegro 🇲🇪",
-    "389": "North Macedonia 🇲🇰",
-    "383": "Kosovo 🇽🇰",
-    "355": "Albania 🇦🇱",
-    "386": "Slovenia 🇸🇮",
-    "421": "Slovakia 🇸🇰",
-    "352": "Luxembourg 🇱🇺",
-    "356": "Malta 🇲🇹",
-    "357": "Cyprus 🇨🇾",
+    "62": "Indonesia 🇮🇩", "60": "Malaysia 🇲🇾", "65": "Singapore 🇸🇬",
+    "66": "Thailand 🇹🇭", "84": "Vietnam 🇻🇳", "63": "Philippines 🇵🇭",
+    "855": "Cambodia 🇰🇭", "856": "Laos 🇱🇦", "95": "Myanmar 🇲🇲",
+    "673": "Brunei 🇧🇳", "670": "Timor-Leste 🇹🇱",
+    "91": "India 🇮🇳", "92": "Pakistan 🇵🇰", "880": "Bangladesh 🇧🇩",
+    "94": "Sri Lanka 🇱🇰", "977": "Nepal 🇳🇵", "975": "Bhutan 🇧🇹",
+    "960": "Maldives 🇲🇻", "93": "Afghanistan 🇦🇫",
+    "86": "China 🇨🇳", "81": "Japan 🇯🇵", "82": "South Korea 🇰🇷",
+    "850": "North Korea 🇰🇵", "886": "Taiwan 🇹🇼", "852": "Hong Kong 🇭🇰",
+    "853": "Macau 🇲🇴", "976": "Mongolia 🇲🇳",
+    "971": "UAE 🇦🇪", "966": "Saudi Arabia 🇸🇦", "974": "Qatar 🇶🇦",
+    "965": "Kuwait 🇰🇼", "968": "Oman 🇴🇲", "973": "Bahrain 🇧🇭",
+    "962": "Jordan 🇯🇴", "961": "Lebanon 🇱🇧", "963": "Syria 🇸🇾",
+    "964": "Iraq 🇮🇶", "98": "Iran 🇮🇷", "972": "Israel 🇮🇱",
+    "970": "Palestine 🇵🇸", "967": "Yemen 🇾🇪", "90": "Turkey 🇹🇷",
+    "994": "Azerbaijan 🇦🇿", "995": "Georgia 🇬🇪", "374": "Armenia 🇦🇲",
+    "44": "United Kingdom 🇬🇧", "33": "France 🇫🇷", "49": "Germany 🇩🇪",
+    "39": "Italy 🇮🇹", "34": "Spain 🇪🇸", "31": "Netherlands 🇳🇱",
+    "32": "Belgium 🇧🇪", "41": "Switzerland 🇨🇭", "43": "Austria 🇦🇹",
+    "46": "Sweden 🇸🇪", "47": "Norway 🇳🇴", "45": "Denmark 🇩🇰",
+    "358": "Finland 🇫🇮", "48": "Poland 🇵🇱", "420": "Czech Republic 🇨🇿",
+    "36": "Hungary 🇭🇺", "40": "Romania 🇷🇴", "359": "Bulgaria 🇧🇬",
+    "30": "Greece 🇬🇷", "351": "Portugal 🇵🇹", "353": "Ireland 🇮🇪",
+    "7": "Russia 🇷🇺", "380": "Ukraine 🇺🇦", "375": "Belarus 🇧🇾",
+    "370": "Lithuania 🇱🇹", "371": "Latvia 🇱🇻", "372": "Estonia 🇪🇪",
+    "385": "Croatia 🇭🇷", "381": "Serbia 🇷🇸", "387": "Bosnia 🇧🇦",
+    "382": "Montenegro 🇲🇪", "389": "North Macedonia 🇲🇰", "383": "Kosovo 🇽🇰",
+    "355": "Albania 🇦🇱", "386": "Slovenia 🇸🇮", "421": "Slovakia 🇸🇰",
+    "352": "Luxembourg 🇱🇺", "356": "Malta 🇲🇹", "357": "Cyprus 🇨🇾",
     "354": "Iceland 🇮🇸",
-    # Amerika
-    "1": "USA/Canada 🇺🇸",
-    "52": "Mexico 🇲🇽",
-    "55": "Brazil 🇧🇷",
-    "54": "Argentina 🇦🇷",
-    "56": "Chile 🇨🇱",
-    "57": "Colombia 🇨🇴",
-    "51": "Peru 🇵🇪",
-    "58": "Venezuela 🇻🇪",
-    "593": "Ecuador 🇪🇨",
-    "591": "Bolivia 🇧🇴",
-    "595": "Paraguay 🇵🇾",
-    "598": "Uruguay 🇺🇾",
-    "507": "Panama 🇵🇦",
-    "506": "Costa Rica 🇨🇷",
-    "503": "El Salvador 🇸🇻",
-    "502": "Guatemala 🇬🇹",
-    "504": "Honduras 🇭🇳",
-    "505": "Nicaragua 🇳🇮",
-    "53": "Cuba 🇨🇺",
-    "1809": "Dominican Republic 🇩🇴",
-    "1876": "Jamaica 🇯🇲",
+    "1": "USA/Canada 🇺🇸", "52": "Mexico 🇲🇽", "55": "Brazil 🇧🇷",
+    "54": "Argentina 🇦🇷", "56": "Chile 🇨🇱", "57": "Colombia 🇨🇴",
+    "51": "Peru 🇵🇪", "58": "Venezuela 🇻🇪", "593": "Ecuador 🇪🇨",
+    "591": "Bolivia 🇧🇴", "595": "Paraguay 🇵🇾", "598": "Uruguay 🇺🇾",
+    "507": "Panama 🇵🇦", "506": "Costa Rica 🇨🇷", "503": "El Salvador 🇸🇻",
+    "502": "Guatemala 🇬🇹", "504": "Honduras 🇭🇳", "505": "Nicaragua 🇳🇮",
+    "53": "Cuba 🇨🇺", "1809": "Dominican Republic 🇩🇴", "1876": "Jamaica 🇯🇲",
     "1868": "Trinidad & Tobago 🇹🇹",
-    # Afrika
-    "20": "Egypt 🇪🇬",
-    "27": "South Africa 🇿🇦",
-    "234": "Nigeria 🇳🇬",
-    "254": "Kenya 🇰🇪",
-    "233": "Ghana 🇬🇭",
-    "212": "Morocco 🇲🇦",
-    "213": "Algeria 🇩🇿",
-    "216": "Tunisia 🇹🇳",
-    "218": "Libya 🇱🇾",
-    "251": "Ethiopia 🇪🇹",
-    "255": "Tanzania 🇹🇿",
-    "256": "Uganda 🇺🇬",
-    "250": "Rwanda 🇷🇼",
-    "257": "Burundi 🇧🇮",
-    "260": "Zambia 🇿🇲",
-    "263": "Zimbabwe 🇿🇼",
-    "265": "Malawi 🇲🇼",
-    "267": "Botswana 🇧🇼",
-    "268": "Eswatini 🇸🇿",
-    "266": "Lesotho 🇱🇸",
-    "258": "Mozambique 🇲🇿",
-    "261": "Madagascar 🇲🇬",
-    "230": "Mauritius 🇲🇺",
-    "248": "Seychelles 🇸🇨",
-    "221": "Senegal 🇸🇳",
-    "225": "Ivory Coast 🇨🇮",
-    "226": "Burkina Faso 🇧🇫",
-    "223": "Mali 🇲🇱",
-    "227": "Niger 🇳🇪",
-    "228": "Togo 🇹🇬",
-    "229": "Benin 🇧🇯",
-    "241": "Gabon 🇬🇦",
-    "242": "Congo 🇨🇬",
-    "243": "DR Congo 🇨🇩",
-    "237": "Cameroon 🇨🇲",
-    "235": "Chad 🇹🇩",
-    "236": "Central African Republic 🇨🇫",
-    "240": "Equatorial Guinea 🇬🇶",
-    "239": "Sao Tome 🇸🇹",
-    "244": "Angola 🇦🇴",
-    "249": "Sudan 🇸🇩",
-    "211": "South Sudan 🇸🇸",
-    "252": "Somalia 🇸🇴",
-    "253": "Djibouti 🇩🇯",
+    "20": "Egypt 🇪🇬", "27": "South Africa 🇿🇦", "234": "Nigeria 🇳🇬",
+    "254": "Kenya 🇰🇪", "233": "Ghana 🇬🇭", "212": "Morocco 🇲🇦",
+    "213": "Algeria 🇩🇿", "216": "Tunisia 🇹🇳", "218": "Libya 🇱🇾",
+    "251": "Ethiopia 🇪🇹", "255": "Tanzania 🇹🇿", "256": "Uganda 🇺🇬",
+    "250": "Rwanda 🇷🇼", "257": "Burundi 🇧🇮", "260": "Zambia 🇿🇲",
+    "263": "Zimbabwe 🇿🇼", "265": "Malawi 🇲🇼", "267": "Botswana 🇧🇼",
+    "268": "Eswatini 🇸🇿", "266": "Lesotho 🇱🇸", "258": "Mozambique 🇲🇿",
+    "261": "Madagascar 🇲🇬", "230": "Mauritius 🇲🇺", "248": "Seychelles 🇸🇨",
+    "221": "Senegal 🇸🇳", "225": "Ivory Coast 🇨🇮", "226": "Burkina Faso 🇧🇫",
+    "223": "Mali 🇲🇱", "227": "Niger 🇳🇪", "228": "Togo 🇹🇬",
+    "229": "Benin 🇧🇯", "241": "Gabon 🇬🇦", "242": "Congo 🇨🇬",
+    "243": "DR Congo 🇨🇩", "237": "Cameroon 🇨🇲", "235": "Chad 🇹🇩",
+    "236": "Central African Republic 🇨🇫", "240": "Equatorial Guinea 🇬🇶",
+    "239": "Sao Tome 🇸🇹", "244": "Angola 🇦🇴", "249": "Sudan 🇸🇩",
+    "211": "South Sudan 🇸🇸", "252": "Somalia 🇸🇴", "253": "Djibouti 🇩🇯",
     "291": "Eritrea 🇪🇷",
-    # Oseania
-    "61": "Australia 🇦🇺",
-    "64": "New Zealand 🇳🇿",
-    "679": "Fiji 🇫🇯",
-    "675": "Papua New Guinea 🇵🇬",
-    "677": "Solomon Islands 🇸🇧",
-    "678": "Vanuatu 🇻🇺",
-    "685": "Samoa 🇼🇸",
-    "676": "Tonga 🇹🇴",
-    "680": "Palau 🇵🇼",
-    "691": "Micronesia 🇫🇲",
-    "692": "Marshall Islands 🇲🇭",
-    "674": "Nauru 🇳🇷",
-    "686": "Kiribati 🇰🇮",
-    "688": "Tuvalu 🇹🇻",
+    "61": "Australia 🇦🇺", "64": "New Zealand 🇳🇿", "679": "Fiji 🇫🇯",
+    "675": "Papua New Guinea 🇵🇬", "677": "Solomon Islands 🇸🇧",
+    "678": "Vanuatu 🇻🇺", "685": "Samoa 🇼🇸", "676": "Tonga 🇹🇴",
+    "680": "Palau 🇵🇼", "691": "Micronesia 🇫🇲", "692": "Marshall Islands 🇲🇭",
+    "674": "Nauru 🇳🇷", "686": "Kiribati 🇰🇮", "688": "Tuvalu 🇹🇻",
 }
 
-# --- FUNGSI CEK FORCE SUBSCRIBE ---
-async def is_user_joined(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    belum_join = []
-
-    for group_id in REQUIRED_GROUP_IDS:
-        try:
-            member = await context.bot.get_chat_member(chat_id=group_id, user_id=user_id)
-            if member.status in ['left', 'kicked']:
-                belum_join.append(group_id)
-        except Exception as e:
-            logging.error(f"Gagal cek member di {group_id}: {e}")
-            belum_join.append(group_id)
-
-    return belum_join
-
-# --- HELPER USER LIST (untuk broadcast) ---
-def load_users():
+# =========================================================
+# HELPER
+# =========================================================
+def load_users() -> set:
     if not os.path.exists(USERS_FILE):
         return set()
-    with open(USERS_FILE, 'r') as f:
-        return set(int(line.strip()) for line in f if line.strip().isdigit())
+    with open(USERS_FILE, "r") as f:
+        return {int(line.strip()) for line in f if line.strip().isdigit()}
 
 def save_user(user_id: int):
     users = load_users()
     if user_id not in users:
-        with open(USERS_FILE, 'a') as f:
-            f.write(str(user_id) + "\n")
+        with open(USERS_FILE, "a") as f:
+            f.write(f"{user_id}\n")
 
 def is_force_sub_enabled() -> bool:
-    """Default ON jika file belum ada."""
     if not os.path.exists(FORCE_SUB_FILE):
         return True
-    with open(FORCE_SUB_FILE, 'r') as f:
-        return f.read().strip().lower() != 'off'
+    with open(FORCE_SUB_FILE, "r") as f:
+        return f.read().strip().lower() != "off"
 
 def set_force_sub(enabled: bool):
-    with open(FORCE_SUB_FILE, 'w') as f:
-        f.write('on' if enabled else 'off')
+    with open(FORCE_SUB_FILE, "w") as f:
+        f.write("on" if enabled else "off")
 
-# --- SISTEM AKSES / TRIAL ---
 def load_access() -> dict:
     if not os.path.exists(ACCESS_FILE):
         return {}
     try:
-        with open(ACCESS_FILE, 'r') as f:
+        with open(ACCESS_FILE, "r") as f:
             return json.load(f)
     except Exception:
         return {}
 
 def save_access(data: dict):
-    with open(ACCESS_FILE, 'w') as f:
+    with open(ACCESS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 def ensure_user_access(user_id: int) -> dict:
-    """Pastikan user punya data akses. User baru/lama dapat trial 14 hari."""
     data = load_access()
     key = str(user_id)
     now = datetime.now()
-
     if key not in data:
-        # User baru atau belum tercatat → beri trial
         data[key] = {
             "joined_at": now.isoformat(),
             "access_until": (now + timedelta(days=TRIAL_DAYS)).isoformat(),
@@ -315,22 +195,16 @@ def ensure_user_access(user_id: int) -> dict:
     return data[key]
 
 def has_access(user_id: int) -> tuple[bool, str]:
-    """Return (boleh_akses, pesan_status). Admin selalu boleh."""
     if user_id == ADMIN_ID:
         return True, "Admin ∞"
-
     info = ensure_user_access(user_id)
     access_until = info.get("access_until")
-
     if access_until is None:
-        # Permanent
         return True, "Permanent ✅"
-
     try:
         until = datetime.fromisoformat(access_until)
     except Exception:
         return False, "Akses tidak valid"
-
     now = datetime.now()
     if now <= until:
         sisa = (until - now).days
@@ -338,17 +212,14 @@ def has_access(user_id: int) -> tuple[bool, str]:
         if tipe == "trial":
             return True, f"Trial • sisa {sisa} hari"
         return True, f"Aktif • sisa {sisa} hari"
-
     return False, "Akses berakhir ❌"
 
 def grant_access(user_id: int, days: int | None = None):
-    """days=None → permanent."""
     data = load_access()
     key = str(user_id)
     now = datetime.now()
     if key not in data:
         data[key] = {"joined_at": now.isoformat()}
-
     if days is None:
         data[key]["access_until"] = None
         data[key]["type"] = "permanent"
@@ -367,233 +238,1199 @@ def revoke_access(user_id: int):
     data[key]["type"] = "revoked"
     save_access(data)
 
-async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
-    """Tampilkan menu utama (premium look, tanpa folder)."""
-    user = update.effective_user or (update.callback_query.from_user if update.callback_query else None)
+async def is_user_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> list:
+    user_id = update.effective_user.id
+    belum = []
+    for gid in REQUIRED_GROUP_IDS:
+        try:
+            member = await context.bot.get_chat_member(chat_id=gid, user_id=user_id)
+            if member.status in ("left", "kicked"):
+                belum.append(gid)
+        except Exception as e:
+            logger.error(f"Gagal cek member {gid}: {e}")
+            belum.append(gid)
+    return belum
+
+def detect_country(nomor: str) -> str:
+    for code in sorted(COUNTRY_CODES.keys(), key=len, reverse=True):
+        if nomor.startswith(code):
+            return COUNTRY_CODES[code]
+    return "Tidak diketahui ❓"
+
+def clean_number(text: str) -> str:
+    return "".join(filter(str.isdigit, text))
+
+def extract_numbers_from_text(text: str) -> list[str]:
+    result = []
+    for line in text.splitlines():
+        n = clean_number(line)
+        if len(n) >= 8:
+            result.append(n)
+    return result
+
+def extract_numbers_from_file(path: str, ext: str) -> list[str]:
+    numbers = []
+    if ext == "txt":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                n = clean_number(line)
+                if len(n) >= 8:
+                    numbers.append(n)
+    elif ext == "xlsx":
+        wb = openpyxl.load_workbook(path, data_only=True)
+        sheet = wb.active
+        for row in sheet.iter_rows(values_only=True):
+            for cell in row:
+                if cell is not None:
+                    n = clean_number(str(cell))
+                    if len(n) >= 8:
+                        numbers.append(n)
+    elif ext == "csv":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                for cell in row:
+                    n = clean_number(str(cell))
+                    if len(n) >= 8:
+                        numbers.append(n)
+    return numbers
+
+def parse_vcards(content: str) -> list[str]:
+    return re.findall(r"BEGIN:VCARD.*?END:VCARD", content, re.DOTALL | re.IGNORECASE)
+
+def get_fn(vcard: str) -> str:
+    m = re.search(r"FN:(.*)", vcard, re.IGNORECASE)
+    return m.group(1).strip() if m else "Unknown"
+
+def get_tel(vcard: str) -> str:
+    m = re.search(r"TEL.*?:(.*)", vcard, re.IGNORECASE)
+    return clean_number(m.group(1)) if m else ""
+
+def safe_filename(name: str) -> str:
+    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+
+# =========================================================
+# CEK AKSES
+# =========================================================
+async def require_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    uid = update.effective_user.id
+    ok, status = has_access(uid)
+    if ok:
+        return True
+    msg = (
+        f"🔒 **Akses Berakhir**\n\n"
+        f"Masa trial / akses kamu sudah habis.\n"
+        f"Hubungi admin untuk perpanjang.\n\n"
+        f"Status: `{status}`"
+    )
+    if update.message:
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    elif update.callback_query:
+        await update.callback_query.answer("Akses berakhir", show_alert=True)
+        await update.callback_query.edit_message_text(msg, parse_mode="Markdown")
+    return False
+
+# =========================================================
+# MENU UTAMA (/start)
+# =========================================================
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, edit: bool = False):
+    user = update.effective_user
+    if not user and update.callback_query:
+        user = update.callback_query.from_user
     uid = user.id if user else 0
 
-    # Pastikan data akses ada
     if uid:
         ensure_user_access(uid)
-        ok, status_akses = has_access(uid)
+        _, status = has_access(uid)
     else:
-        ok, status_akses = True, ""
-
-    keyboard = [
-        [InlineKeyboardButton("📄 TXT  →  VCF", callback_data='menu_txt_to_vcf')],
-        [InlineKeyboardButton("📇 VCF  →  TXT", callback_data='menu_vcf_to_txt')],
-        [InlineKeyboardButton("📊 XLSX →  TXT", callback_data='menu_xlsx_to_txt')],
-        [InlineKeyboardButton("✏️  Edit VCF", callback_data='menu_edit_vcf')],
-        [InlineKeyboardButton("✍️  Input Manual", callback_data='menu_manual')],
-        [InlineKeyboardButton("🔗  Gabung VCF", callback_data='menu_merge_vcf')],
-        [InlineKeyboardButton("✂️  Pecah VCF", callback_data='menu_split_vcf')],
-        [InlineKeyboardButton("📄  Pecah TXT", callback_data='menu_split_txt')],
-        [InlineKeyboardButton("🔍  Cek File", callback_data='menu_cek_file')],
-        [InlineKeyboardButton("👮‍♂️  Admin & Navy VCF", callback_data='menu_admin_navy')],
-        [InlineKeyboardButton("💎  Donate", callback_data='menu_donate')],
-    ]
-    if user and user.id == ADMIN_ID:
-        status_fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
-        keyboard.append([InlineKeyboardButton(f"⚙️ Force Sub: {status_fs}", callback_data='admin_toggle_forcesub')])
-        keyboard.append([InlineKeyboardButton("👥 Cek User Bot", callback_data='admin_cek_user')])
-        keyboard.append([InlineKeyboardButton("📢 Broadcast", callback_data='menu_broadcast')])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        status = "-"
 
     nama = user.first_name if user else "User"
-    pesan = (
+    text = (
         f"✨ **CV Kurumi Premium**\n"
         f"─────────────────\n"
         f"Halo, **{nama}**!\n"
-        f"Status akses: `{status_akses}`\n"
+        f"Status akses: `{status}`\n"
         f"─────────────────\n"
-        f"Pilih menu di bawah untuk mulai."
+        f"Pilih menu di bawah untuk mulai.\n\n"
+        f"mulai bot → `/start`\n"
+        f"konversi file ke .vcf → `/to_vcf`\n"
+        f"konversi file ke .txt → `/to_txt`\n"
+        f"fitur adminnavy → `/admin`\n"
+        f"input kontak manual → `/manual`\n"
+        f"tambah kontak ke .vcf → `/add`\n"
+        f"hapus kontak dari file → `/delete`\n"
+        f"ganti nama kontak → `/renamectc`\n"
+        f"ganti nama file → `/renamefile`\n"
+        f"gabungkan file → `/merge`\n"
+        f"pecah file → `/split`\n"
+        f"hitung jumlah kontak → `/count`\n"
+        f"hapus kontak duplikat → `/nodup`\n"
+        f"extract nama file → `/getname`\n"
+        f"generate nama file → `/generate`\n"
+        f"ekstrak isi file .txt → `/getconten`\n"
+        f"menu pengaturan → `/setting`\n"
+        f"cek status akun → `/status`"
     )
 
+    keyboard = []
+    if user and user.id == ADMIN_ID:
+        fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
+        keyboard = [
+            [InlineKeyboardButton(f"⚙️ Force Sub: {fs}", callback_data="admin_toggle_fs")],
+            [InlineKeyboardButton("👥 Cek User Bot", callback_data="admin_cek_user")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
+        ]
+    markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+
     if edit and update.callback_query:
-        await update.callback_query.edit_message_text(
-            pesan, reply_markup=reply_markup, parse_mode='Markdown'
-        )
+        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
     elif update.message:
-        await update.message.reply_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
     elif update.callback_query:
-        await update.callback_query.edit_message_text(
-            pesan, reply_markup=reply_markup, parse_mode='Markdown'
-        )
+        await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
     return MENU
 
-# --- MENU UTAMA ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
+    user = update.effective_user
+    if user:
+        save_user(user.id)
+        ensure_user_access(user.id)
 
-    # Simpan user yang start bot (untuk broadcast)
-    if update.effective_user:
-        save_user(update.effective_user.id)
-        ensure_user_access(update.effective_user.id)
-
-    # Cek force subscribe hanya jika diaktifkan
     if is_force_sub_enabled():
-        belum_join = await is_user_joined(update, context)
-    else:
-        belum_join = []
+        belum = await is_user_joined(update, context)
+        if belum:
+            kb = [[InlineKeyboardButton(f"Join Grup Wajib {i+1}", url=link)] for i, link in enumerate(INVITE_LINKS)]
+            msg = (
+                "⚠️ **Wajib Join Dulu**\n\n"
+                "Sebelum memakai **CV Kurumi Premium**, kamu harus join grup/channel di bawah.\n"
+                "Setelah join, kirim /start lagi."
+            )
+            if update.message:
+                await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            else:
+                await update.callback_query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+            return MENU
 
-    if belum_join:
-        keyboard = []
-        for i, link in enumerate(INVITE_LINKS):
-            keyboard.append([InlineKeyboardButton(f"Join Grup Wajib {i+1}", url=link)])
+    return await show_menu(update, context, edit=bool(update.callback_query))
 
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        pesan = (
-            "⚠️ **Wajib Join Dulu**\n\n"
-            "Sebelum memakai **CV Kurumi Premium**, kamu harus join grup/channel di bawah ini.\n"
-            "Setelah join, klik /start lagi."
+# =========================================================
+# COMMAND HANDLERS
+# =========================================================
+async def cmd_to_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "📄 **Konversi ke VCF** (`/to_vcf`)\n\n"
+        "Kirim file `.txt` / `.xlsx` / `.csv` yang berisi nomor."
+    )
+    return TO_VCF_FILE
+
+async def cmd_to_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "📇 **Konversi ke TXT** (`/to_txt`)\n\n"
+        "Kirim file `.vcf` / `.xlsx` / `.csv`."
+    )
+    return TO_TXT_FILE
+
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    context.user_data["an_groups"] = []
+    context.user_data["an_current_numbers"] = []
+    await update.message.reply_text(
+        "👮‍♂️ **Admin & Navy VCF** (`/admin`)\n\n"
+        "Ketik **Nama Grup** pertama (contoh: `Admin Gacor`):"
+    )
+    return ADMIN_NAMA_GRUP
+
+async def cmd_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    context.user_data["manual_data"] = []
+    await update.message.reply_text(
+        "✍️ **Input Manual** (`/manual`)\n\n"
+        "Ketik **Nama Kontak** (contoh: `NAFF`):"
+    )
+    return MANUAL_NAMA
+
+async def cmd_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "➕ **Tambah Kontak ke VCF** (`/add`)\n\n"
+        "Kirim file `.vcf` yang ingin ditambahkan kontaknya."
+    )
+    return ADD_FILE
+
+async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "🗑️ **Hapus Kontak** (`/delete`)\n\n"
+        "Kirim file `.vcf` atau `.txt`."
+    )
+    return DELETE_FILE
+
+async def cmd_renamectc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "✏️ **Ganti Nama Kontak** (`/renamectc`)\n\n"
+        "Kirim file `.vcf`."
+    )
+    return RENAME_CTC_FILE
+
+async def cmd_renamefile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "📝 **Ganti Nama File** (`/renamefile`)\n\n"
+        "Kirim file yang ingin diganti namanya."
+    )
+    return RENAME_FILE
+
+async def cmd_merge(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    context.user_data["merge_files"] = []
+    await update.message.reply_text(
+        "🔗 **Gabungkan VCF** (`/merge`)\n\n"
+        "Kirim file `.vcf` pertama.\n"
+        "Kirim sebanyak yang dibutuhkan, lalu ketik `selesai`."
+    )
+    return MERGE_FILE
+
+async def cmd_split(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "✂️ **Pecah File** (`/split`)\n\n"
+        "Kirim file `.vcf` atau `.txt`."
+    )
+    return SPLIT_FILE
+
+async def cmd_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "🔢 **Hitung Jumlah Kontak** (`/count`)\n\n"
+        "Kirim file `.vcf` / `.txt` / `.xlsx` / `.csv`."
+    )
+    return COUNT_FILE
+
+async def cmd_nodup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "🧹 **Hapus Duplikat** (`/nodup`)\n\n"
+        "Kirim file `.vcf` atau `.txt`."
+    )
+    return NODUP_FILE
+
+async def cmd_getname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "📛 **Extract Nama Kontak** (`/getname`)\n\n"
+        "Kirim file `.vcf`."
+    )
+    return GETNAME_FILE
+
+async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "⚙️ **Generate Nama** (`/generate`)\n\n"
+        "Ketik pola nama (contoh: `Kontak_NAFF` atau `Admin`):"
+    )
+    return GENERATE_NAMA
+
+async def cmd_getconten(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await require_access(update, context):
+        return MENU
+    await update.message.reply_text(
+        "📄 **Ekstrak Isi TXT** (`/getconten`)\n\n"
+        "Kirim file `.txt`."
+    )
+    return GETCONTEN_FILE
+
+async def cmd_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    _, status = has_access(uid)
+    fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
+    text = (
+        f"⚙️ **Menu Pengaturan** (`/setting`)\n\n"
+        f"• Status akses : `{status}`\n"
+        f"• Force Subscribe : {fs}\n"
+        f"• Trial default : `{TRIAL_DAYS}` hari\n\n"
+    )
+    if uid == ADMIN_ID:
+        text += (
+            "**Admin commands:**\n"
+            "`/grant <user_id> [hari]`\n"
+            "`/revoke <user_id>`\n"
+            "`/cekakses <user_id>`"
         )
+    else:
+        text += "Hubungi admin untuk perpanjang akses."
+    await update.message.reply_text(text, parse_mode="Markdown")
+    return MENU
 
-        if update.message:
-            await update.message.reply_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
-        else:
-            await update.callback_query.edit_message_text(pesan, reply_markup=reply_markup, parse_mode='Markdown')
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    _, status = has_access(uid)
+    info = load_access().get(str(uid), {})
+    text = (
+        f"📊 **Status Akun** (`/status`)\n\n"
+        f"• User ID : `{uid}`\n"
+        f"• Status  : `{status}`\n"
+        f"• Tipe    : `{info.get('type', '-')}`\n"
+        f"• Join    : `{str(info.get('joined_at', '-'))[:10]}`\n"
+        f"• Until   : `{info.get('access_until') or 'Permanent'}`"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+    return MENU
+
+# =========================================================
+# HANDLER FILE & STATE
+# =========================================================
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc or not doc.file_name:
+        await update.message.reply_text("❌ File tidak valid.")
         return MENU
 
-    return await show_main_menu(update, context, edit=bool(update.callback_query))
+    ext = doc.file_name.rsplit(".", 1)[-1].lower()
+    context.user_data["file_id"] = doc.file_id
+    context.user_data["file_name"] = doc.file_name
+    context.user_data["file_ext"] = ext
 
-# --- HANDLER TOMBOL MENU ---
-async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    state = context.user_data.get("_state")  # kita set di masing-masing command
+
+    # --- TO_VCF ---
+    if context.user_data.get("mode") == "to_vcf":
+        if ext not in ("txt", "xlsx", "csv"):
+            await update.message.reply_text("❌ Harus file .txt / .xlsx / .csv")
+            return TO_VCF_FILE
+        await update.message.reply_text("Ketik **Nama File** (contoh: `Kontak_NAFF`):")
+        return TO_VCF_NAMA_FILE
+
+    # --- TO_TXT ---
+    if context.user_data.get("mode") == "to_txt":
+        if ext not in ("vcf", "xlsx", "csv"):
+            await update.message.reply_text("❌ Harus file .vcf / .xlsx / .csv")
+            return TO_TXT_FILE
+        await proses_to_txt(update, context)
+        return MENU
+
+    # --- ADD ---
+    if context.user_data.get("mode") == "add":
+        if ext != "vcf":
+            await update.message.reply_text("❌ Harus file .vcf")
+            return ADD_FILE
+        await update.message.reply_text(
+            "Kirim nomor yang ingin ditambahkan (bisa banyak, pisah spasi/baris):"
+        )
+        return ADD_NOMOR
+
+    # --- DELETE ---
+    if context.user_data.get("mode") == "delete":
+        if ext not in ("vcf", "txt"):
+            await update.message.reply_text("❌ Harus file .vcf atau .txt")
+            return DELETE_FILE
+        await update.message.reply_text(
+            "Kirim nomor yang ingin **dihapus** (bisa banyak):"
+        )
+        return DELETE_NOMOR
+
+    # --- RENAME CTC ---
+    if context.user_data.get("mode") == "renamectc":
+        if ext != "vcf":
+            await update.message.reply_text("❌ Harus file .vcf")
+            return RENAME_CTC_FILE
+        await update.message.reply_text(
+            "Ketik **Nama Kontak Baru** (akan jadi Nama 001, Nama 002, ...):"
+        )
+        return RENAME_CTC_NAMA
+
+    # --- RENAME FILE ---
+    if context.user_data.get("mode") == "renamefile":
+        await update.message.reply_text(
+            "Ketik **Nama File Baru** (tanpa ekstensi):\nContoh: `Hasil_Final`"
+        )
+        return RENAME_FILE_NEW
+
+    # --- MERGE ---
+    if context.user_data.get("mode") == "merge":
+        if ext != "vcf":
+            await update.message.reply_text("❌ Harus file .vcf")
+            return MERGE_FILE
+        context.user_data.setdefault("merge_files", []).append(doc.file_id)
+        await update.message.reply_text(
+            f"✅ File ke-{len(context.user_data['merge_files'])} ditambahkan.\n"
+            "Kirim lagi atau ketik `selesai`."
+        )
+        return MERGE_FILE
+
+    # --- SPLIT ---
+    if context.user_data.get("mode") == "split":
+        if ext not in ("vcf", "txt"):
+            await update.message.reply_text("❌ Harus file .vcf atau .txt")
+            return SPLIT_FILE
+        await update.message.reply_text("Ketik **jumlah per file** (contoh: `500`):")
+        return SPLIT_LIMIT
+
+    # --- COUNT ---
+    if context.user_data.get("mode") == "count":
+        if ext not in ("vcf", "txt", "xlsx", "csv"):
+            await update.message.reply_text("❌ Format tidak didukung")
+            return COUNT_FILE
+        await proses_count(update, context)
+        return MENU
+
+    # --- NODUP ---
+    if context.user_data.get("mode") == "nodup":
+        if ext not in ("vcf", "txt"):
+            await update.message.reply_text("❌ Harus file .vcf atau .txt")
+            return NODUP_FILE
+        await proses_nodup(update, context)
+        return MENU
+
+    # --- GETNAME ---
+    if context.user_data.get("mode") == "getname":
+        if ext != "vcf":
+            await update.message.reply_text("❌ Harus file .vcf")
+            return GETNAME_FILE
+        await proses_getname(update, context)
+        return MENU
+
+    # --- GETCONTEN ---
+    if context.user_data.get("mode") == "getconten":
+        if ext != "txt":
+            await update.message.reply_text("❌ Harus file .txt")
+            return GETCONTEN_FILE
+        await proses_getconten(update, context)
+        return MENU
+
+    await update.message.reply_text("❓ Tidak ada proses aktif. Ketik /start")
+    return MENU
+
+# =========================================================
+# PROSES FUNGSI
+# =========================================================
+async def to_vcf_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["nama_file"] = safe_filename(update.message.text)
+    await update.message.reply_text("Ketik **Nama Kontak** (contoh: `NAFF`):")
+    return TO_VCF_NAMA_KONTAK
+
+async def to_vcf_nama_kontak(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["nama_kontak"] = update.message.text.strip()
+    await update.message.reply_text("Mau dipecah berapa nomor per file? (contoh: `500`):")
+    return TO_VCF_LIMIT
+
+async def to_vcf_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        limit = int(update.message.text.strip())
+        if limit < 1:
+            raise ValueError
+        context.user_data["limit"] = limit
+    except ValueError:
+        await update.message.reply_text("❌ Harus angka positif.")
+        return TO_VCF_LIMIT
+
+    await update.message.reply_text("⏳ Sedang memproses...")
+    await proses_to_vcf(update, context)
+    return MENU
+
+async def proses_to_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+    nama_file = context.user_data["nama_file"]
+    nama_kontak = context.user_data["nama_kontak"]
+    limit = context.user_data["limit"]
+
+    file = await context.bot.get_file(file_id)
+    path = f"temp_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    numbers = extract_numbers_from_file(path, ext)
+    os.remove(path)
+
+    if not numbers:
+        await update.message.reply_text("❌ Tidak ditemukan nomor valid.")
+        context.user_data.clear()
+        return
+
+    total_files = math.ceil(len(numbers) / limit)
+    for i in range(total_files):
+        chunk = numbers[i * limit : (i + 1) * limit]
+        out_name = f"{nama_file} {i + 1}.vcf"
+        with open(out_name, "w", encoding="utf-8") as f:
+            for j, n in enumerate(chunk):
+                urutan = i * limit + j + 1
+                f.write(
+                    f"BEGIN:VCARD\nVERSION:3.0\n"
+                    f"FN:{nama_kontak} {urutan:03d}\n"
+                    f"TEL;TYPE=CELL:+{n}\nEND:VCARD\n"
+                )
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(out_name, "rb"),
+            caption=f"{nama_file} {i + 1} ({len(chunk)} kontak)"
+        )
+        os.remove(out_name)
+
+    await update.message.reply_text("🎉 Selesai! Ketik /start untuk menu lagi.")
+    context.user_data.clear()
+
+async def proses_to_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+
+    file = await context.bot.get_file(file_id)
+    path = f"temp_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    if ext == "vcf":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        numbers = [get_tel(v) for v in parse_vcards(content) if get_tel(v)]
+    else:
+        numbers = extract_numbers_from_file(path, ext)
+
+    os.remove(path)
+    numbers = list(dict.fromkeys(numbers))  # unique preserve order
+
+    out_name = "Hasil_Ekstrak.txt"
+    with open(out_name, "w") as f:
+        f.write("\n".join(numbers))
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out_name, "rb"),
+        caption=f"✅ {len(numbers)} nomor unik diekstrak"
+    )
+    os.remove(out_name)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+
+# --- MANUAL ---
+async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["temp_nama"] = update.message.text.strip()
+    await update.message.reply_text(
+        f"✅ Nama dasar: **{context.user_data['temp_nama']}**\n\n"
+        "Kirim nomor (bisa banyak sekaligus):",
+        parse_mode="Markdown"
+    )
+    return MANUAL_NOMOR
+
+async def manual_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
+    if not baru:
+        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        return MANUAL_NOMOR
+
+    context.user_data.setdefault("manual_data", []).extend(baru)
+    total = len(context.user_data["manual_data"])
+    kb = [
+        [InlineKeyboardButton("➕ Tambah Lagi", callback_data="manual_lagi")],
+        [InlineKeyboardButton("✅ Selesai & Simpan", callback_data="manual_selesai")]
+    ]
+    await update.message.reply_text(
+        f"✅ Ditambah {len(baru)} nomor. Total: **{total}**",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="Markdown"
+    )
+    return MENU
+
+async def manual_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
-    uid = query.from_user.id
-
-    # Fitur admin tidak dicek akses
-    admin_only = data.startswith('admin_') or data == 'menu_broadcast'
-
-    # Cek akses untuk fitur biasa
-    if not admin_only and data.startswith('menu_'):
-        ok, status = has_access(uid)
-        if not ok:
-            await query.edit_message_text(
-                f"🔒 **Akses Berakhir**\n\n"
-                f"Masa trial / akses kamu sudah habis.\n"
-                f"Hubungi admin untuk perpanjang akses.\n\n"
-                f"Status: `{status}`",
-                parse_mode='Markdown'
-            )
+    if query.data == "manual_lagi":
+        await query.edit_message_text("Kirim nomor lagi:")
+        return MANUAL_NOMOR
+    if query.data == "manual_selesai":
+        numbers = context.user_data.get("manual_data", [])
+        if not numbers:
+            await query.edit_message_text("❌ Belum ada nomor.")
             return MENU
+        nama = context.user_data.get("temp_nama", "Kontak")
+        out = safe_filename(f"{nama}.vcf")
+        with open(out, "w", encoding="utf-8") as f:
+            for i, n in enumerate(numbers, 1):
+                f.write(
+                    f"BEGIN:VCARD\nVERSION:3.0\n"
+                    f"FN:{nama} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
+                )
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=open(out, "rb"),
+            caption=f"✅ {len(numbers)} kontak • `{out}`",
+            parse_mode="Markdown"
+        )
+        os.remove(out)
+        await context.bot.send_message(query.message.chat_id, "🎉 Selesai! Ketik /start.")
+        context.user_data.clear()
+        return MENU
+    return MENU
 
-    if data == 'menu_txt_to_vcf':
-        await query.edit_message_text("📄 **TXT ke VCF**\n\nSilakan kirim file `.txt` berisi nomor.")
-        context.user_data['waiting_for'] = 'txt'
-        return MENU
-    elif data == 'menu_vcf_to_txt':
-        await query.edit_message_text("📇 **VCF ke TXT**\n\nSilakan kirim file `.vcf`.")
-        context.user_data['waiting_for'] = 'vcf_to_txt'
-        return MENU
-    elif data == 'menu_xlsx_to_txt':
-        await query.edit_message_text("📊 **XLSX ke TXT**\n\nSilakan kirim file `.xlsx` atau `.csv`.")
-        context.user_data['waiting_for'] = 'xlsx_to_txt'
-        return MENU
-    elif data == 'menu_edit_vcf':
-        await query.edit_message_text("✏️ **Edit VCF**\n\nSilakan kirim file `.vcf`.")
-        context.user_data['waiting_for'] = 'edit'
-        return MENU
-    elif data == 'menu_manual':
-        context.user_data['manual_data'] = []
-        await query.edit_message_text("✍️ **Input Manual**\n\nKetik **Nama Kontak** (contoh: `NAFF`):")
-        return MANUAL_NAMA
-    elif data == 'menu_merge_vcf':
-        context.user_data['merge_files'] = []
-        await query.edit_message_text("🔗 **Gabung VCF**\n\nKirim file `.vcf` pertama.")
-        context.user_data['waiting_for'] = 'merge'
+# --- ADD ---
+async def add_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
+    if not baru:
+        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        return ADD_NOMOR
+
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    file = await context.bot.get_file(file_id)
+    path = f"temp_add_{file_id}.vcf"
+    await file.download_to_drive(path)
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    existing = parse_vcards(content)
+    base = "Kontak"
+    if existing:
+        fn = get_fn(existing[0])
+        base = re.sub(r"\s*\d+$", "", fn).strip() or "Kontak"
+
+    start = len(existing) + 1
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content.rstrip() + "\n")
+        for i, n in enumerate(baru):
+            f.write(
+                f"BEGIN:VCARD\nVERSION:3.0\n"
+                f"FN:{base} {start + i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
+            )
+
+    out = safe_filename(file_name.replace(".vcf", "") + "_added.vcf")
+    os.rename(path, out)
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out, "rb"),
+        caption=f"✅ Ditambah {len(baru)} kontak. Total sekarang: {len(existing) + len(baru)}"
+    )
+    os.remove(out)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- DELETE ---
+async def delete_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    to_del = {clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8}
+    if not to_del:
+        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        return DELETE_NOMOR
+
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+    file = await context.bot.get_file(file_id)
+    path = f"temp_del_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    if ext == "txt":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        kept = [l for l in lines if clean_number(l) not in to_del]
+        out = safe_filename(file_name.replace(".txt", "") + "_deleted.txt")
+        with open(out, "w") as f:
+            f.writelines(kept)
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(out, "rb"),
+            caption=f"✅ Dihapus {len(lines) - len(kept)} nomor. Sisa {len(kept)}"
+        )
+        os.remove(out)
+    else:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        vcards = parse_vcards(content)
+        kept = [v for v in vcards if get_tel(v) not in to_del]
+        out = safe_filename(file_name.replace(".vcf", "") + "_deleted.vcf")
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("\n".join(kept))
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(out, "rb"),
+            caption=f"✅ Dihapus {len(vcards) - len(kept)} kontak. Sisa {len(kept)}"
+        )
+        os.remove(out)
+
+    os.remove(path)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- RENAME CTC ---
+async def rename_ctc_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama = update.message.text.strip()
+    if not nama:
+        await update.message.reply_text("❌ Nama tidak boleh kosong.")
+        return RENAME_CTC_NAMA
+
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    file = await context.bot.get_file(file_id)
+    path = f"temp_ren_{file_id}.vcf"
+    await file.download_to_drive(path)
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    os.remove(path)
+
+    vcards = parse_vcards(content)
+    new_vcards = []
+    for i, v in enumerate(vcards, 1):
+        tel = get_tel(v)
+        new_vcards.append(
+            f"BEGIN:VCARD\nVERSION:3.0\nFN:{nama} {i:03d}\nTEL;TYPE=CELL:+{tel}\nEND:VCARD"
+        )
+
+    out = safe_filename(file_name.replace(".vcf", "") + "_renamed.vcf")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write("\n".join(new_vcards))
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out, "rb"),
+        caption=f"✅ Semua nama diganti menjadi `{nama} 001` dst.\nTotal: {len(new_vcards)}",
+        parse_mode="Markdown"
+    )
+    os.remove(out)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- RENAME FILE ---
+async def rename_file_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama = safe_filename(update.message.text.strip())
+    if not nama:
+        await update.message.reply_text("❌ Nama tidak boleh kosong.")
+        return RENAME_FILE_NEW
+
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+    if not nama.lower().endswith(f".{ext}"):
+        nama += f".{ext}"
+
+    file = await context.bot.get_file(file_id)
+    await file.download_to_drive(nama)
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(nama, "rb"),
+        caption=f"✅ File diganti nama menjadi `{nama}`",
+        parse_mode="Markdown"
+    )
+    os.remove(nama)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- MERGE ---
+async def merge_selesai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip().lower() != "selesai":
+        await update.message.reply_text("Ketik `selesai` jika sudah selesai mengirim file.")
         return MERGE_FILE
-    elif data == 'menu_split_vcf':
-        await query.edit_message_text("✂️ **Pecah VCF**\n\nSilakan kirim file `.vcf` yang mau dipecah.")
-        context.user_data['waiting_for'] = 'split'
-        return MENU
-    elif data == 'menu_split_txt':
-        await query.edit_message_text("📄 **Pecah TXT**\n\nSilakan kirim file `.txt` yang mau dipecah.")
-        context.user_data['waiting_for'] = 'split_txt'
-        return MENU
-    elif data == 'menu_cek_file':
-        await query.edit_message_text(
-            "🔍 **Cek File (TXT / XLSX / CSV)**\n\n"
-            "Silakan kirim file `.txt`, `.xlsx`, atau `.csv`.\n"
-            "Bot akan hitung Total, Unik, Duplikat + deteksi negara."
-        )
-        context.user_data['waiting_for'] = 'cek_file'
-        return MENU
-    elif data == 'menu_admin_navy':
-        context.user_data['an_groups'] = []
-        context.user_data['an_current_numbers'] = []
-        await query.edit_message_text(
-            "👮‍♂️ **1 File VCF (Admin & Navy)**\n\n"
-            "Ketik **Nama Grup** pertama (contoh: `Admin Gacor`):"
-        )
-        return ADMIN_NAVY_NAMA_GRUP
 
-    elif data == 'menu_broadcast':
-        if query.from_user.id != ADMIN_ID:
-            await query.answer("⛔ Kamu bukan admin!", show_alert=True)
-            return MENU
-        await query.edit_message_text(
-            "📢 **Broadcast Message**\n\n"
-            "Kirim pesan yang ingin disiarkan ke **semua user** bot ini.\n"
-            "Bisa berupa teks biasa.\n\n"
-            "Ketik `/cancel` untuk batal."
-        )
-        return BROADCAST_MESSAGE
+    files = context.user_data.get("merge_files", [])
+    if len(files) < 2:
+        await update.message.reply_text("❌ Minimal 2 file VCF.")
+        return MERGE_FILE
 
-    elif data == 'menu_donate':
-        qris_path = "qris.png"
-        if not os.path.exists(qris_path):
-            await query.edit_message_text("❌ File QRIS belum tersedia. Hubungi admin.")
-            return MENU
+    await update.message.reply_text("⏳ Menggabungkan...")
+    out = "Merged.vcf"
+    with open(out, "w", encoding="utf-8") as outf:
+        for fid in files:
+            f = await context.bot.get_file(fid)
+            p = f"temp_{fid}.vcf"
+            await f.download_to_drive(p)
+            with open(p, "r", encoding="utf-8", errors="ignore") as inf:
+                outf.write(inf.read().rstrip() + "\n")
+            os.remove(p)
 
-        await query.answer()
-        with open(qris_path, 'rb') as photo:
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=photo,
-                caption=(
-                    "💰 **Donasi ke Admin CV Kurumi**\n\n"
-                    "Scan QRIS di atas untuk mendukung admin.\n"
-                    "Terima kasih banyak atas dukungannya! ❤️"
-                ),
-                parse_mode='Markdown'
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out, "rb"),
+        caption="✅ File VCF berhasil digabung!"
+    )
+    os.remove(out)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- SPLIT ---
+async def split_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        limit = int(update.message.text.strip())
+        if limit < 1:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Harus angka positif.")
+        return SPLIT_LIMIT
+
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+
+    file = await context.bot.get_file(file_id)
+    path = f"temp_split_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    if ext == "vcf":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        items = parse_vcards(content)
+        total = math.ceil(len(items) / limit)
+        await update.message.reply_text(f"⏳ Memecah {len(items)} kontak menjadi {total} file...")
+        for i in range(total):
+            chunk = items[i * limit : (i + 1) * limit]
+            out = f"Split {i + 1}.vcf"
+            with open(out, "w", encoding="utf-8") as f:
+                f.write("\n".join(chunk))
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=open(out, "rb"),
+                caption=f"Split {i + 1} ({len(chunk)} kontak)"
             )
+            os.remove(out)
+    else:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        total = math.ceil(len(lines) / limit)
+        await update.message.reply_text(f"⏳ Memecah {len(lines)} baris menjadi {total} file...")
+        base = file_name.rsplit(".", 1)[0]
+        for i in range(total):
+            chunk = lines[i * limit : (i + 1) * limit]
+            out = f"{base} {i + 1}.txt"
+            with open(out, "w") as f:
+                f.write("\n".join(chunk))
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=open(out, "rb"),
+                caption=f"{base} {i + 1} ({len(chunk)} baris)"
+            )
+            os.remove(out)
+
+    os.remove(path)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- COUNT ---
+async def proses_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+
+    file = await context.bot.get_file(file_id)
+    path = f"temp_count_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    if ext == "vcf":
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        vcards = parse_vcards(content)
+        total = len(vcards)
+        numbers = [get_tel(v) for v in vcards if get_tel(v)]
+    else:
+        numbers = extract_numbers_from_file(path, ext)
+        total = len(numbers)
+
+    os.remove(path)
+    unik = len(set(numbers))
+    dup = total - unik
+
+    country = Counter(detect_country(n) for n in set(numbers))
+    text = (
+        f"🔢 **Hasil Hitung**\n📁 `{file_name}`\n\n"
+        f"• Total    : `{total}`\n"
+        f"• Unik     : `{unik}`\n"
+        f"• Duplikat : `{dup}`\n\n"
+        f"🌍 **Negara (unik):**\n"
+    )
+    for negara, jml in country.most_common(12):
+        text += f"• {negara}: `{jml}`\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    context.user_data.clear()
+
+# --- NODUP ---
+async def proses_nodup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    ext = context.user_data["file_ext"]
+
+    file = await context.bot.get_file(file_id)
+    path = f"temp_nodup_{file_id}.{ext}"
+    await file.download_to_drive(path)
+
+    if ext == "txt":
+        numbers = extract_numbers_from_file(path, "txt")
+        unik = list(dict.fromkeys(numbers))
+        out = safe_filename(file_name.replace(".txt", "") + "_nodup.txt")
+        with open(out, "w") as f:
+            f.write("\n".join(unik))
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(out, "rb"),
+            caption=f"✅ {len(unik)} nomor unik (dari {len(numbers)})"
+        )
+        os.remove(out)
+    else:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        vcards = parse_vcards(content)
+        seen = set()
+        unique = []
+        for v in vcards:
+            tel = get_tel(v)
+            if tel and tel not in seen:
+                seen.add(tel)
+                unique.append(v)
+        out = safe_filename(file_name.replace(".vcf", "") + "_nodup.vcf")
+        with open(out, "w", encoding="utf-8") as f:
+            f.write("\n".join(unique))
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(out, "rb"),
+            caption=f"✅ {len(unique)} kontak unik (dari {len(vcards)})"
+        )
+        os.remove(out)
+
+    os.remove(path)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+
+# --- GETNAME ---
+async def proses_getname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    file = await context.bot.get_file(file_id)
+    path = f"temp_getname_{file_id}.vcf"
+    await file.download_to_drive(path)
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    os.remove(path)
+
+    names = [get_fn(v) for v in parse_vcards(content)]
+    out = "Nama_Kontak.txt"
+    with open(out, "w", encoding="utf-8") as f:
+        f.write("\n".join(names))
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out, "rb"),
+        caption=f"✅ {len(names)} nama diekstrak dari `{file_name}`",
+        parse_mode="Markdown"
+    )
+    os.remove(out)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+
+# --- GENERATE ---
+async def generate_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["gen_base"] = update.message.text.strip()
+    await update.message.reply_text(
+        f"Nama dasar: **{context.user_data['gen_base']}**\n\n"
+        "Ketik **jumlah** yang ingin digenerate (contoh: `100`):",
+        parse_mode="Markdown"
+    )
+    return GENERATE_JUMLAH
+
+async def generate_jumlah(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        jml = int(update.message.text.strip())
+        if not (1 <= jml <= 10000):
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Jumlah harus 1 - 10000.")
+        return GENERATE_JUMLAH
+
+    base = context.user_data.get("gen_base", "Kontak")
+    lines = [f"{base} {i:03d}" for i in range(1, jml + 1)]
+    out = safe_filename(f"{base}_generated.txt")
+    with open(out, "w") as f:
+        f.write("\n".join(lines))
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(out, "rb"),
+        caption=f"✅ {jml} nama digenerate."
+    )
+    os.remove(out)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# --- GETCONTEN ---
+async def proses_getconten(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = context.user_data["file_id"]
+    file_name = context.user_data["file_name"]
+    file = await context.bot.get_file(file_id)
+    path = f"temp_content_{file_id}.txt"
+    await file.download_to_drive(path)
+
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(path, "rb"),
+        caption=f"📄 `{file_name}` • {len(content.splitlines())} baris",
+        parse_mode="Markdown"
+    )
+    os.remove(path)
+
+    lines = content.splitlines()
+    preview = "\n".join(lines[:25])
+    if len(lines) > 25:
+        preview += "\n... (dan seterusnya)"
+    await update.message.reply_text(f"Preview:\n```\n{preview}\n```", parse_mode="Markdown")
+    context.user_data.clear()
+
+# --- ADMIN & NAVY ---
+async def admin_nama_grup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama = update.message.text.strip()
+    if not nama:
+        await update.message.reply_text("❌ Nama grup tidak boleh kosong.")
+        return ADMIN_NAMA_GRUP
+    context.user_data["an_current_name"] = nama
+    context.user_data["an_current_numbers"] = []
+    await update.message.reply_text(
+        f"✅ Nama grup: **{nama}**\n\n"
+        "Kirim nomor (bisa banyak).\n"
+        "Ketik `selesai` jika grup ini sudah cukup.",
+        parse_mode="Markdown"
+    )
+    return ADMIN_NOMOR
+
+async def admin_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if text.lower() == "selesai":
+        numbers = context.user_data.get("an_current_numbers", [])
+        if not numbers:
+            await update.message.reply_text("❌ Belum ada nomor.")
+            return ADMIN_NOMOR
+        context.user_data.setdefault("an_groups", []).append({
+            "name": context.user_data["an_current_name"],
+            "numbers": numbers.copy()
+        })
+        total_g = len(context.user_data["an_groups"])
+        total_n = sum(len(g["numbers"]) for g in context.user_data["an_groups"])
+        ringkas = "".join(f"• **{g['name']}** → {len(g['numbers'])} nomor\n" for g in context.user_data["an_groups"])
+        kb = [
+            [InlineKeyboardButton("➕ Tambah Grup Lagi", callback_data="an_tambah")],
+            [InlineKeyboardButton("✅ Buat 1 File VCF", callback_data="an_buat")],
+        ]
+        await update.message.reply_text(
+            f"✅ Grup **{context.user_data['an_current_name']}** disimpan ({len(numbers)} nomor).\n\n"
+            f"📋 **Ringkasan:**\n{ringkas}\n"
+            f"Total: **{total_g} grup** | **{total_n} nomor**",
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode="Markdown"
+        )
+        return ADMIN_PILIH
+
+    baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
+    if not baru:
+        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        return ADMIN_NOMOR
+    context.user_data["an_current_numbers"].extend(baru)
+    total = len(context.user_data["an_current_numbers"])
+    await update.message.reply_text(
+        f"✅ Ditambah {len(baru)} nomor. Total di grup ini: **{total}**\n"
+        "Kirim lagi atau ketik `selesai`.",
+        parse_mode="Markdown"
+    )
+    return ADMIN_NOMOR
+
+async def admin_pilih(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "an_tambah":
+        await query.edit_message_text("Ketik **Nama Grup** berikutnya:")
+        return ADMIN_NAMA_GRUP
+    if query.data == "an_buat":
+        await query.edit_message_text("📝 Ketik **Nama File** (tanpa .vcf):")
+        return ADMIN_NAMA_FILE
+    return ADMIN_PILIH
+
+async def admin_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    nama = safe_filename(update.message.text.strip())
+    if not nama:
+        await update.message.reply_text("❌ Nama file tidak boleh kosong.")
+        return ADMIN_NAMA_FILE
+    if not nama.lower().endswith(".vcf"):
+        nama += ".vcf"
+
+    groups = context.user_data.get("an_groups", [])
+    if not groups:
+        await update.message.reply_text("❌ Tidak ada data. Ketik /start.")
         return MENU
 
-    # ===== ADMIN ONLY =====
-    elif data == 'admin_toggle_forcesub':
-        if query.from_user.id != ADMIN_ID:
-            await query.answer("⛔ Kamu bukan admin!", show_alert=True)
-            return MENU
+    await update.message.reply_text("⏳ Membuat file VCF...")
+    with open(nama, "w", encoding="utf-8") as f:
+        for g in groups:
+            for i, n in enumerate(g["numbers"], 1):
+                f.write(
+                    f"BEGIN:VCARD\nVERSION:3.0\n"
+                    f"FN:{g['name']} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
+                )
+
+    total = sum(len(g["numbers"]) for g in groups)
+    ringkas = "".join(f"• {g['name']}: {len(g['numbers'])} kontak\n" for g in groups)
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(nama, "rb"),
+        caption=(
+            f"✅ **1 File VCF siap!**\n📁 `{nama}`\n\n"
+            f"{ringkas}\n👥 Total: **{len(groups)} grup** | **{total} kontak**"
+        ),
+        parse_mode="Markdown"
+    )
+    os.remove(nama)
+    await update.message.reply_text("🎉 Selesai! Ketik /start.")
+    context.user_data.clear()
+    return MENU
+
+# =========================================================
+# ADMIN EXTRA
+# =========================================================
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("⛔ Bukan admin!", show_alert=True)
+        return MENU
+
+    if query.data == "admin_toggle_fs":
         current = is_force_sub_enabled()
         set_force_sub(not current)
         status = "ON ✅" if not current else "OFF ❌"
-        await query.answer(f"Force Sub sekarang: {status}", show_alert=True)
-        return await show_main_menu(update, context, edit=True)
+        await query.answer(f"Force Sub: {status}", show_alert=True)
+        return await show_menu(update, context, edit=True)
 
-    elif data == 'admin_cek_user':
-        if query.from_user.id != ADMIN_ID:
-            await query.answer("⛔ Kamu bukan admin!", show_alert=True)
-            return MENU
+    if query.data == "admin_cek_user":
         users = load_users()
         total = len(users)
-        fs_status = "Aktif ✅" if is_force_sub_enabled() else "Nonaktif ❌"
-
-        # Kirim ringkasan + file daftar user
-        await query.answer()
+        fs = "Aktif ✅" if is_force_sub_enabled() else "Nonaktif ❌"
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=(
-                f"👥 **Statistik User Bot**\n\n"
-                f"• Total user : `{total}`\n"
-                f"• Force Sub  : {fs_status}\n"
-            ),
-            parse_mode='Markdown'
+            text=f"👥 **Statistik User**\n\n• Total user : `{total}`\n• Force Sub  : {fs}",
+            parse_mode="Markdown"
         )
         if total > 0:
-            with open(USERS_FILE, 'rb') as f:
+            with open(USERS_FILE, "rb") as f:
                 await context.bot.send_document(
                     chat_id=query.message.chat_id,
                     document=f,
@@ -601,899 +1438,78 @@ async def menu_pilihan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         return MENU
 
-    return MENU
-
-# --- HANDLER FILE ---
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    ext = doc.file_name.split('.')[-1].lower()
-
-    context.user_data['file_id'] = doc.file_id
-    context.user_data['file_name'] = doc.file_name
-    mode = context.user_data.get('waiting_for')
-
-    if mode == 'txt':
-        if ext != 'txt':
-            await update.message.reply_text("❌ Harus file .txt ya!")
-            return MENU
-        await update.message.reply_text("Ketik **Nama File** (contoh: `Kontak_NAFF`):")
-        return TXT_NAMA_FILE
-
-    elif mode == 'vcf_to_txt':
-        await proses_vcf_to_txt(update, context)
-        return MENU
-
-    elif mode == 'xlsx_to_txt':
-        await proses_xlsx_to_txt(update, context)
-        return MENU
-
-    elif mode == 'edit':
-        await update.message.reply_text("Ketik **Nama Kontak Baru** (atau `tidak` untuk skip):")
-        return EDIT_NAMA
-
-    elif mode == 'merge':
-        context.user_data['merge_files'].append(doc.file_id)
-        await update.message.reply_text(
-            f"✅ File VCF ke-{len(context.user_data['merge_files'])} ditambahkan.\n"
-            "Kirim lagi, atau ketik `selesai` jika sudah."
-        )
-        return MERGE_FILE
-
-    elif mode == 'split':
-        await update.message.reply_text("Ketik **Jumlah kontak per file** (contoh: `500`):")
-        return SPLIT_LIMIT
-
-    elif mode == 'split_txt':
-        if ext != 'txt':
-            await update.message.reply_text("❌ Harus file .txt ya!")
-            return MENU
-        await update.message.reply_text("Ketik **Jumlah baris per file** (contoh: `500`):")
-        return TXT_SPLIT_LIMIT
-
-    elif mode == 'cek_file':
-        if ext not in ['txt', 'xlsx', 'csv']:
-            await update.message.reply_text("❌ Harus file .txt / .xlsx / .csv ya!")
-            return MENU
-        await proses_cek_file(update, context)
-        return MENU
-
-    return MENU
-
-# ==================== FITUR BARU 1: CEK FILE ====================
-def extract_numbers_from_file(path: str, ext: str) -> list:
-    nomor_list = []
-    if ext == 'txt':
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                n = ''.join(filter(str.isdigit, line.strip()))
-                if len(n) >= 8:
-                    nomor_list.append(n)
-    elif ext == 'xlsx':
-        wb = openpyxl.load_workbook(path, data_only=True)
-        sheet = wb.active
-        for row in sheet.iter_rows(values_only=True):
-            for cell in row:
-                if cell is not None:
-                    n = ''.join(filter(str.isdigit, str(cell)))
-                    if len(n) >= 8:
-                        nomor_list.append(n)
-    elif ext == 'csv':
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                for cell in row:
-                    n = ''.join(filter(str.isdigit, str(cell)))
-                    if len(n) >= 8:
-                        nomor_list.append(n)
-    return nomor_list
-
-def detect_country(nomor: str) -> str:
-    # Coba kode panjang dulu
-    for code in sorted(COUNTRY_CODES.keys(), key=len, reverse=True):
-        if nomor.startswith(code):
-            return COUNTRY_CODES[code]
-    return "Tidak diketahui ❓"
-
-async def proses_cek_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file_id = context.user_data['file_id']
-    file_name = context.user_data['file_name']
-    ext = file_name.split('.')[-1].lower()
-
-    file = await context.bot.get_file(file_id)
-    path = f"temp_cek_{file_id}.{ext}"
-    await file.download_to_drive(path)
-
-    nomor_list = extract_numbers_from_file(path, ext)
-    os.remove(path)
-
-    if not nomor_list:
-        await update.message.reply_text("❌ Tidak ditemukan nomor valid di file.")
-        context.user_data.clear()
-        return
-
-    total = len(nomor_list)
-    counter = Counter(nomor_list)
-    unik = len(counter)
-    duplikat = total - unik
-
-    # Deteksi negara
-    country_count = Counter()
-    for n in counter.keys():  # pakai unik saja biar lebih cepat
-        country_count[detect_country(n)] += 1
-
-    # Susun pesan
-    pesan = (
-        f"🔍 **Hasil Cek File**\n"
-        f"📁 `{file_name}`\n\n"
-        f"📊 **Statistik Nomor:**\n"
-        f"• Total      : `{total}`\n"
-        f"• Unik       : `{unik}`\n"
-        f"• Duplikat   : `{duplikat}`\n\n"
-        f"🌍 **Deteksi Negara (berdasarkan nomor unik):**\n"
-    )
-    for negara, jumlah in country_count.most_common():
-        pesan += f"• {negara}: `{jumlah}`\n"
-
-    keyboard = []
-    if duplikat > 0:
-        # Simpan data sementara untuk hapus duplikat
-        context.user_data['cek_nomor_unik'] = list(counter.keys())
-        context.user_data['cek_file_name'] = file_name
-        keyboard.append([InlineKeyboardButton("🗑️ Hapus Duplikat & Download", callback_data='cek_hapus_duplikat')])
-
-    keyboard.append([InlineKeyboardButton("🔙 Kembali ke Menu", callback_data='cek_kembali')])
-
-    await update.message.reply_text(
-        pesan,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-async def cek_aksi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == 'cek_hapus_duplikat':
-        nomor_unik = context.user_data.get('cek_nomor_unik', [])
-        if not nomor_unik:
-            await query.edit_message_text("❌ Data sudah tidak tersedia. Ketik /start lagi.")
-            return MENU
-
-        nama_txt = "Nomor_Unik.txt"
-        with open(nama_txt, 'w') as f:
-            for n in nomor_unik:
-                f.write(n + "\n")
-
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=open(nama_txt, 'rb'),
-            caption=f"✅ {len(nomor_unik)} nomor unik (duplikat sudah dihapus)"
-        )
-        os.remove(nama_txt)
-
+    if query.data == "admin_broadcast":
         await query.edit_message_text(
-            "🎉 Selesai! File nomor unik sudah dikirim.\nKetik /start untuk kembali ke menu."
+            "📢 **Broadcast**\n\nKirim pesan yang ingin disiarkan ke semua user.\n"
+            "Ketik /cancel untuk batal."
         )
-        context.user_data.clear()
-        return MENU
-
-    elif query.data == 'cek_kembali':
-        context.user_data.clear()
-        return await show_main_menu(update, context, edit=True)
+        return BROADCAST_MESSAGE
 
     return MENU
 
-# ==================== FITUR BARU 2: 1 FILE VCF (ADMIN & NAVY) ====================
-async def an_nama_grup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nama = update.message.text.strip()
-    if not nama:
-        await update.message.reply_text("❌ Nama grup tidak boleh kosong. Ketik lagi:")
-        return ADMIN_NAVY_NAMA_GRUP
-
-    context.user_data['an_current_name'] = nama
-    context.user_data['an_current_numbers'] = []
-    await update.message.reply_text(
-        f"✅ Nama grup: **{nama}**\n\n"
-        f"Sekarang kirim nomor.\n"
-        f"• Bisa satu nomor\n"
-        f"• Bisa banyak nomor sekaligus (pisah spasi / baris baru)\n\n"
-        f"Contoh:\n"
-        f"`628123456789`\n"
-        f"atau\n"
-        f"`628111 628222 628333`\n\n"
-        f"Nomor akan otomatis dinamai:\n"
-        f"`{nama} 1`, `{nama} 2`, dst.\n\n"
-        f"Kalau sudah selesai untuk grup ini, ketik: `selesai`",
-        parse_mode='Markdown'
-    )
-    return ADMIN_NAVY_NOMOR
-
-async def an_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-
-    # Cek perintah selesai
-    if text.lower() == 'selesai':
-        numbers = context.user_data.get('an_current_numbers', [])
-        if not numbers:
-            await update.message.reply_text("❌ Belum ada nomor. Kirim minimal 1 nomor dulu.")
-            return ADMIN_NAVY_NOMOR
-
-        # Simpan grup saat ini
-        context.user_data['an_groups'].append({
-            "name": context.user_data['an_current_name'],
-            "numbers": numbers.copy()
-        })
-
-        total_grup = len(context.user_data['an_groups'])
-        total_nomor = sum(len(g['numbers']) for g in context.user_data['an_groups'])
-
-        # Ringkasan grup yang sudah ada
-        ringkasan = ""
-        for g in context.user_data['an_groups']:
-            ringkasan += f"• **{g['name']}** → {len(g['numbers'])} nomor\n"
-
-        keyboard = [
-            [InlineKeyboardButton("➕ Tambah Grup Lagi", callback_data='an_tambah_grup')],
-            [InlineKeyboardButton("✅ Buat 1 File VCF Sekarang", callback_data='an_buat_file')],
-        ]
-        await update.message.reply_text(
-            f"✅ Grup **{context.user_data['an_current_name']}** berhasil disimpan "
-            f"({len(numbers)} nomor).\n\n"
-            f"📋 **Ringkasan sementara:**\n{ringkasan}\n"
-            f"Total: **{total_grup} grup** | **{total_nomor} nomor**\n\n"
-            f"Mau tambah grup lain (contoh: Navy) atau langsung buat file?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-        return ADMIN_NAVY_PILIH
-
-    # Ambil semua nomor dari pesan (bisa banyak sekaligus)
-    # Pisah berdasarkan spasi, koma, atau baris baru
-    potongan = re.split(r'[\s,;]+', text)
-    nomor_baru = []
-    for p in potongan:
-        n = ''.join(filter(str.isdigit, p))
-        if len(n) >= 8:
-            nomor_baru.append(n)
-
-    if not nomor_baru:
-        await update.message.reply_text(
-            "❌ Tidak ada nomor valid.\n"
-            "Kirim nomor (bisa banyak sekaligus) atau ketik `selesai`."
-        )
-        return ADMIN_NAVY_NOMOR
-
-    # Tambahkan semua nomor yang valid
-    for n in nomor_baru:
-        context.user_data['an_current_numbers'].append(n)
-
-    total_di_grup = len(context.user_data['an_current_numbers'])
-    nama_grup = context.user_data['an_current_name']
-
-    # Tampilkan ringkasan penambahan
-    if len(nomor_baru) == 1:
-        urutan = total_di_grup
-        pesan = (
-            f"✅ Ditambahkan: **{nama_grup} {urutan:03d}** → `+{nomor_baru[0]}`\n"
-            f"Total di grup ini: **{total_di_grup}** nomor.\n\n"
-            f"Kirim nomor lagi atau ketik `selesai`."
-        )
-    else:
-        pesan = (
-            f"✅ Berhasil menambahkan **{len(nomor_baru)}** nomor ke grup **{nama_grup}**.\n"
-            f"Total di grup ini sekarang: **{total_di_grup}** nomor.\n\n"
-            f"Kirim nomor lagi atau ketik `selesai`."
-        )
-
-    await update.message.reply_text(pesan, parse_mode='Markdown')
-    return ADMIN_NAVY_NOMOR
-
-async def an_pilih(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == 'an_tambah_grup':
-        await query.edit_message_text(
-            "Ketik **Nama Grup** berikutnya (contoh: `Navy Elite` / `Admin 2`):"
-        )
-        return ADMIN_NAVY_NAMA_GRUP
-
-    elif query.data == 'an_buat_file':
-        await query.edit_message_text(
-            "📝 Ketik **Nama File** yang diinginkan (tanpa .vcf)\n"
-            "Contoh: `Admin_Navy_Final`"
-        )
-        return ADMIN_NAVY_FILE_NAME
-
-    return ADMIN_NAVY_PILIH
-
-async def an_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nama_file = update.message.text.strip()
-    if not nama_file:
-        await update.message.reply_text("❌ Nama file tidak boleh kosong. Ketik lagi:")
-        return ADMIN_NAVY_FILE_NAME
-
-    # Bersihkan karakter aneh
-    nama_file = re.sub(r'[\\/*?:"<>|]', '', nama_file)
-    if not nama_file.endswith('.vcf'):
-        nama_file += '.vcf'
-
-    groups = context.user_data.get('an_groups', [])
-    if not groups:
-        await update.message.reply_text("❌ Tidak ada data. Ketik /start ulang.")
-        return MENU
-
-    await update.message.reply_text("⏳ Sedang membuat file VCF...")
-
-    with open(nama_file, 'w', encoding='utf-8') as f:
-        for grup in groups:
-            for idx, nomor in enumerate(grup['numbers'], start=1):
-                # Nomor urut dengan padding 001, 002, dst
-                fn = f"{grup['name']} {idx:03d}"
-                f.write(
-                    f"BEGIN:VCARD\n"
-                    f"VERSION:3.0\n"
-                    f"FN:{fn}\n"
-                    f"TEL;TYPE=CELL:+{nomor}\n"
-                    f"END:VCARD\n"
-                )
-
-    total_kontak = sum(len(g['numbers']) for g in groups)
-
-    # Buat ringkasan untuk caption
-    ringkasan = ""
-    for g in groups:
-        ringkasan += f"• {g['name']}: {len(g['numbers'])} kontak\n"
-
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=open(nama_file, 'rb'),
-        caption=(
-            f"✅ **1 File VCF siap!**\n"
-            f"📁 `{nama_file}`\n\n"
-            f"{ringkasan}\n"
-            f"👥 Total: **{len(groups)} grup** | **{total_kontak} kontak**"
-        ),
-        parse_mode='Markdown'
-    )
-    os.remove(nama_file)
-
-    await update.message.reply_text(
-        "🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**.\nKetik /start untuk menu lagi."
-    )
-    context.user_data.clear()
-    return MENU
-
-# ==================== FITUR BROADCAST (ADMIN ONLY) ====================
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Pastikan hanya admin
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Kamu tidak punya akses.")
+        await update.message.reply_text("⛔ Akses ditolak.")
         return MENU
 
     pesan = update.message.text
-    if not pesan:
-        await update.message.reply_text("❌ Pesan kosong. Kirim teks yang ingin di-broadcast.")
-        return BROADCAST_MESSAGE
-
     users = list(load_users())
     if not users:
-        await update.message.reply_text("❌ Belum ada user yang tersimpan.\n\nUser harus /start dulu supaya masuk daftar.")
+        await update.message.reply_text("❌ Belum ada user.")
         return MENU
 
     total = len(users)
-    await update.message.reply_text(
-        f"⏳ Mengirim broadcast ke **{total}** user...\n"
-        f"Mohon tunggu, jangan spam /start."
-    )
+    await update.message.reply_text(f"⏳ Mengirim ke **{total}** user...")
 
-    sukses = 0
-    gagal = 0
+    sukses = gagal = 0
     blocked = []
-
-    for i, uid in enumerate(users, start=1):
+    for i, uid in enumerate(users, 1):
         try:
             await context.bot.send_message(
                 chat_id=uid,
                 text=f"📢 **Pengumuman dari Admin CV Kurumi**\n\n{pesan}",
-                parse_mode='Markdown'
+                parse_mode="Markdown"
             )
             sukses += 1
-
-            # Jeda kecil supaya tidak kena flood limit Telegram
             await asyncio.sleep(0.07)
-
         except Forbidden:
-            # User block bot atau belum pernah chat
             gagal += 1
             blocked.append(uid)
         except RetryAfter as e:
-            # Kena rate limit, tunggu sesuai saran Telegram
             await asyncio.sleep(e.retry_after + 1)
             try:
                 await context.bot.send_message(
                     chat_id=uid,
                     text=f"📢 **Pengumuman dari Admin CV Kurumi**\n\n{pesan}",
-                    parse_mode='Markdown'
+                    parse_mode="Markdown"
                 )
                 sukses += 1
             except Exception:
                 gagal += 1
-        except BadRequest:
-            gagal += 1
-        except Exception as e:
-            logging.error(f"Gagal kirim ke {uid}: {e}")
+        except Exception:
             gagal += 1
 
-        # Update progress setiap 25 user
         if i % 25 == 0:
             try:
-                await update.message.reply_text(f"⏳ Progress: {i}/{total} ...")
+                await update.message.reply_text(f"⏳ Progress: {i}/{total}")
             except Exception:
                 pass
 
-    # Hapus user yang sudah block bot dari daftar
     if blocked:
         remaining = [u for u in users if u not in blocked]
-        with open(USERS_FILE, 'w') as f:
+        with open(USERS_FILE, "w") as f:
             for u in remaining:
-                f.write(str(u) + "\n")
+                f.write(f"{u}\n")
 
     await update.message.reply_text(
         f"✅ **Broadcast selesai!**\n\n"
-        f"• Total user : `{total}`\n"
-        f"• Berhasil   : `{sukses}`\n"
-        f"• Gagal      : `{gagal}`\n"
-        f"• Dihapus (block) : `{len(blocked)}`\n\n"
-        f"Ketik /start untuk kembali ke menu."
+        f"• Total    : `{total}`\n"
+        f"• Berhasil : `{sukses}`\n"
+        f"• Gagal    : `{gagal}`\n"
+        f"• Dihapus  : `{len(blocked)}`"
     )
     return MENU
 
-# ==================== FITUR LAMA (TIDAK DIUBAH) ====================
-
-# --- TXT TO VCF ---
-async def txt_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nama_file'] = update.message.text
-    await update.message.reply_text("Ketik **Nama Kontak** (contoh: `NAFF`):")
-    return TXT_NAMA_KONTAK
-
-async def txt_nama_kontak(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nama_kontak'] = update.message.text
-    await update.message.reply_text("Mau dipecah berapa nomor per file? (contoh: `500`):")
-    return TXT_LIMIT
-
-async def txt_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        limit = int(update.message.text)
-        context.user_data['limit'] = limit
-        await update.message.reply_text("⏳ **CV Kurumi** sedang memproses TXT ke VCF...")
-        await proses_txt_to_vcf(update, context)
-    except ValueError:
-        await update.message.reply_text("❌ Harus angka ya bray!")
-        return TXT_LIMIT
-    return MENU
-
-async def proses_txt_to_vcf(update, context):
-    file_id = context.user_data['file_id']
-    file = await context.bot.get_file(file_id)
-    path = f"temp_{file_id}.txt"
-    await file.download_to_drive(path)
-
-    nomor_list = []
-    with open(path, 'r') as f:
-        for line in f:
-            n = ''.join(filter(str.isdigit, line.strip()))
-            if len(n) >= 8:
-                nomor_list.append(n)
-    os.remove(path)
-
-    limit = context.user_data['limit']
-    total_f = math.ceil(len(nomor_list) / limit)
-
-    for i in range(total_f):
-        chunk = nomor_list[i*limit : (i+1)*limit]
-        # Nama file: "Testing 1.vcf" (tanpa kata Part)
-        nama_vcf = f"{context.user_data['nama_file']} {i+1}.vcf"
-        with open(nama_vcf, 'w', encoding='utf-8') as f:
-            for j, n in enumerate(chunk):
-                # Nomor urut dengan padding 001, 002, dst
-                urutan = i * limit + j + 1
-                f.write(
-                    f"BEGIN:VCARD\nVERSION:3.0\n"
-                    f"FN:{context.user_data['nama_kontak']} {urutan:03d}\n"
-                    f"TEL;TYPE=CELL:+{n}\nEND:VCARD\n"
-                )
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=open(nama_vcf, 'rb'),
-            caption=f"{context.user_data['nama_file']} {i+1} ({len(chunk)} kontak)"
-        )
-        os.remove(nama_vcf)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
-    )
-    context.user_data.clear()
-
-# --- INPUT MANUAL ---
-async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['temp_nama'] = update.message.text.strip()
-    await update.message.reply_text(
-        f"✅ Nama dasar: **{context.user_data['temp_nama']}**\n\n"
-        f"Sekarang kirim nomor.\n"
-        f"• Bisa 1 nomor\n"
-        f"• Bisa banyak nomor sekaligus (pisah spasi / baris baru)\n\n"
-        f"Contoh:\n`628111111111`\natau\n`628111 628222 628333`\n\n"
-        f"Nomor akan otomatis jadi:\n"
-        f"`{context.user_data['temp_nama']} 001`, `002`, dst.",
-        parse_mode='Markdown'
-    )
-    return MANUAL_NOMOR
-
-async def manual_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    potongan = re.split(r'[\s,;]+', text)
-    nomor_baru = []
-    for p in potongan:
-        n = ''.join(filter(str.isdigit, p))
-        if len(n) >= 8:
-            nomor_baru.append(n)
-
-    if not nomor_baru:
-        await update.message.reply_text(
-            "❌ Tidak ada nomor valid.\nKirim nomor (bisa banyak sekaligus)."
-        )
-        return MANUAL_NOMOR
-
-    nama_dasar = context.user_data['temp_nama']
-    if 'manual_data' not in context.user_data:
-        context.user_data['manual_data'] = []
-
-    for n in nomor_baru:
-        context.user_data['manual_data'].append(n)
-
-    total = len(context.user_data['manual_data'])
-    keyboard = [
-        [InlineKeyboardButton("➕ Tambah Nomor Lagi", callback_data='manual_lagi')],
-        [InlineKeyboardButton("✅ Selesai & Simpan", callback_data='manual_selesai')]
-    ]
-    await update.message.reply_text(
-        f"✅ Berhasil menambah **{len(nomor_baru)}** nomor.\n"
-        f"Total kontak: **{total}**\n"
-        f"Nama: `{nama_dasar} 001` … `{nama_dasar} {total:03d}`",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-    return MENU
-
-async def manual_aksi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == 'manual_lagi':
-        await query.edit_message_text(
-            "Kirim nomor lagi (bisa banyak sekaligus):"
-        )
-        return MANUAL_NOMOR
-    elif query.data == 'manual_selesai':
-        numbers = context.user_data.get('manual_data', [])
-        if not numbers:
-            await query.edit_message_text("❌ Belum ada nomor. Ketik /start ulang.")
-            return MENU
-
-        nama_dasar = context.user_data.get('temp_nama', 'Kontak')
-        await query.edit_message_text("⏳ Membuat file VCF...")
-
-        vcf_name = f"{nama_dasar}.vcf"
-        vcf_name = re.sub(r'[\\/*?:"<>|]', '', vcf_name)
-        if not vcf_name.endswith('.vcf'):
-            vcf_name += '.vcf'
-
-        with open(vcf_name, 'w', encoding='utf-8') as f:
-            for idx, nomor in enumerate(numbers, start=1):
-                fn = f"{nama_dasar} {idx:03d}"
-                f.write(
-                    f"BEGIN:VCARD\nVERSION:3.0\n"
-                    f"FN:{fn}\nTEL;TYPE=CELL:+{nomor}\nEND:VCARD\n"
-                )
-
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=open(vcf_name, 'rb'),
-            caption=f"✅ {len(numbers)} kontak • `{vcf_name}`",
-            parse_mode='Markdown'
-        )
-        os.remove(vcf_name)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="🎉 Selesai! Ketik /start untuk menu lagi."
-        )
-        context.user_data.clear()
-        return MENU
-
-# --- VCF TO TXT ---
-async def proses_vcf_to_txt(update, context):
-    file_id = context.user_data['file_id']
-    file = await context.bot.get_file(file_id)
-    path = f"temp_{file_id}.vcf"
-    await file.download_to_drive(path)
-
-    with open(path, 'r', encoding='utf-8') as f:
-        matches = re.findall(r'TEL.*?:(.*)', f.read())
-    os.remove(path)
-
-    nama_txt = "Ekstrak.txt"
-    with open(nama_txt, 'w') as f:
-        for m in matches:
-            f.write(''.join(filter(str.isdigit, m)) + "\n")
-
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=open(nama_txt, 'rb'),
-        caption="Hasil Ekstrak"
-    )
-    os.remove(nama_txt)
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
-    )
-    context.user_data.clear()
-
-# --- XLSX / CSV TO TXT ---
-async def proses_xlsx_to_txt(update, context):
-    file_id = context.user_data['file_id']
-    file_name = context.user_data['file_name']
-    ext = file_name.split('.')[-1].lower()
-
-    file = await context.bot.get_file(file_id)
-    path = f"temp_{file_id}.{ext}"
-    await file.download_to_drive(path)
-
-    nomor_list = []
-    if ext == 'xlsx':
-        wb = openpyxl.load_workbook(path)
-        sheet = wb.active
-        for row in sheet.iter_rows(values_only=True):
-            for cell in row:
-                if cell is not None:
-                    n = ''.join(filter(str.isdigit, str(cell)))
-                    if len(n) >= 8:
-                        nomor_list.append(n)
-    elif ext == 'csv':
-        with open(path, 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                for cell in row:
-                    n = ''.join(filter(str.isdigit, str(cell)))
-                    if len(n) >= 8:
-                        nomor_list.append(n)
-
-    os.remove(path)
-
-    nomor_unik = list(set(nomor_list))
-
-    nama_txt = "Hasil_XLSX.txt"
-    with open(nama_txt, 'w') as f:
-        for n in nomor_unik:
-            f.write(n + "\n")
-
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=open(nama_txt, 'rb'),
-        caption=f"✅ {len(nomor_unik)} nomor unik berhasil diekstrak!"
-    )
-    os.remove(nama_txt)
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
-    )
-    context.user_data.clear()
-
-# --- PECAH TXT ---
-async def proses_split_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        limit = int(update.message.text)
-    except ValueError:
-        await update.message.reply_text("❌ Harus angka ya bray!")
-        return TXT_SPLIT_LIMIT
-
-    file_id = context.user_data['file_id']
-    file_name = context.user_data['file_name'].replace('.txt', '')
-
-    file = await context.bot.get_file(file_id)
-    path = f"temp_{file_id}.txt"
-    await file.download_to_drive(path)
-
-    with open(path, 'r') as f:
-        lines = [line.strip() for line in f if line.strip()]
-    os.remove(path)
-
-    total_lines = len(lines)
-    total_f = math.ceil(total_lines / limit)
-
-    await update.message.reply_text(f"⏳ Memproses {total_lines} baris jadi {total_f} file...")
-
-    for i in range(total_f):
-        chunk = lines[i*limit : (i+1)*limit]
-        txt_name = f"{file_name} {i+1}.txt"
-
-        with open(txt_name, 'w') as f:
-            f.write("\n".join(chunk))
-
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=open(txt_name, 'rb'),
-            caption=f"✅ {file_name} {i+1} ({len(chunk)} baris)"
-        )
-        os.remove(txt_name)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**."
-    )
-    context.user_data.clear()
-    return MENU
-
-# --- GABUNG VCF ---
-async def merge_selesai(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.lower() == 'selesai':
-        if len(context.user_data['merge_files']) < 2:
-            await update.message.reply_text("❌ Minimal kirim 2 file VCF.")
-            return MERGE_FILE
-
-        await update.message.reply_text("⏳ Memproses penggabungan...")
-        merged = "Merged.vcf"
-        with open(merged, 'w', encoding='utf-8') as out_f:
-            for fid in context.user_data['merge_files']:
-                f = await context.bot.get_file(fid)
-                p = f"temp_{fid}.vcf"
-                await f.download_to_drive(p)
-                with open(p, 'r', encoding='utf-8') as in_f:
-                    out_f.write(in_f.read() + "\n")
-                os.remove(p)
-
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=open(merged, 'rb'),
-            caption="✅ File VCF Berhasil Digabung!"
-        )
-        os.remove(merged)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
-        )
-        context.user_data.clear()
-        return MENU
-    else:
-        await update.message.reply_text("Ketik `selesai` jika sudah selesai ngirim file.")
-        return MERGE_FILE
-
-# --- EDIT VCF ---
-async def edit_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if text.lower() == 'tidak':
-        context.user_data['nama_baru'] = None  # skip ganti nama
-    else:
-        context.user_data['nama_baru'] = text
-    await update.message.reply_text(
-        "Mau ganti prefix nomor?\n"
-        "Ketik kode negara (contoh: `62`) atau ketik `tidak`:"
-    )
-    return EDIT_PREFIX
-
-async def edit_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['edit_prefix'] = update.message.text.strip().lower()
-    await update.message.reply_text(
-        "📝 Ketik **Nama File** baru (tanpa .vcf)\n"
-        "Atau ketik `tidak` untuk pakai nama default."
-    )
-    return EDIT_FILENAME
-
-async def edit_filename(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    file_id = context.user_data['file_id']
-    original_name = context.user_data.get('file_name', 'Edited.vcf')
-
-    file = await context.bot.get_file(file_id)
-    path = f"temp_{file_id}.vcf"
-    await file.download_to_drive(path)
-    with open(path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    os.remove(path)
-
-    # Ganti nama kontak
-    nama_baru = context.user_data.get('nama_baru')
-    if nama_baru:
-        content = re.sub(r'FN:.*', f'FN:{nama_baru}', content)
-
-    # Ganti prefix
-    prefix = context.user_data.get('edit_prefix', 'tidak')
-    if prefix != 'tidak':
-        def rep(m):
-            n = m.group(1)
-            if n.startswith('0'):
-                n = n[1:]
-            return f":+{prefix}{n}"
-        content = re.sub(r':(.*)', rep, content)
-
-    # Nama file
-    if text.lower() == 'tidak':
-        nama_baru_vcf = f"Edited_{original_name}"
-        if not nama_baru_vcf.endswith('.vcf'):
-            nama_baru_vcf += '.vcf'
-    else:
-        nama_baru_vcf = re.sub(r'[\\/*?:"<>|]', '', text)
-        if not nama_baru_vcf.endswith('.vcf'):
-            nama_baru_vcf += '.vcf'
-
-    with open(nama_baru_vcf, 'w', encoding='utf-8') as f:
-        f.write(content)
-
-    await context.bot.send_document(
-        chat_id=update.effective_chat.id,
-        document=open(nama_baru_vcf, 'rb'),
-        caption=f"✅ File VCF Diedit\n📁 `{nama_baru_vcf}`",
-        parse_mode='Markdown'
-    )
-    os.remove(nama_baru_vcf)
-
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🎉 Selesai! Ketik /start untuk menu lagi."
-    )
-    context.user_data.clear()
-    return MENU
-
-# --- PECAH VCF ---
-async def split_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        limit = int(update.message.text)
-        file_id = context.user_data['file_id']
-        file = await context.bot.get_file(file_id)
-        path = f"temp_{file_id}.vcf"
-        await file.download_to_drive(path)
-
-        with open(path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        os.remove(path)
-
-        vcards = re.findall(r'BEGIN:VCARD.*?END:VCARD', content, re.DOTALL)
-        total_f = math.ceil(len(vcards) / limit)
-
-        for i in range(total_f):
-            chunk = vcards[i*limit : (i+1)*limit]
-            sp_name = f"Split {i+1}.vcf"
-            with open(sp_name, 'w', encoding='utf-8') as f:
-                f.write("\n".join(chunk))
-            await context.bot.send_document(
-                chat_id=update.effective_chat.id,
-                document=open(sp_name, 'rb'),
-                caption=f"Split {i+1}"
-            )
-            os.remove(sp_name)
-
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🎉 Selesai! Terima kasih sudah pakai **CV Kurumi**. Ketik /start buat menu lagi."
-        )
-        context.user_data.clear()
-    except ValueError:
-        await update.message.reply_text("❌ Harus angka ya bray!")
-        return SPLIT_LIMIT
-    return MENU
-
-# --- CANCEL & FALLBACK ---
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Dibatalkan. Ketik /start untuk kembali ke menu.")
-    context.user_data.clear()
-    return ConversationHandler.END
-
-async def fallback_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Perintah tidak dikenali. Ketik /start untuk kembali ke menu.")
-    return ConversationHandler.END
-
-# --- ADMIN: KELOLA AKSES ---
 async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Hanya admin.")
@@ -1501,11 +1517,9 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
         await update.message.reply_text(
-            "Format:\n"
-            "`/grant <user_id>` → permanent\n"
-            "`/grant <user_id> <hari>` → berapa hari\n\n"
-            "Contoh:\n`/grant 123456789`\n`/grant 123456789 30`",
-            parse_mode='Markdown'
+            "Format:\n`/grant <user_id>` → permanent\n"
+            "`/grant <user_id> <hari>`\n\nContoh: `/grant 123456789 30`",
+            parse_mode="Markdown"
         )
         return
     try:
@@ -1521,17 +1535,13 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Jumlah hari harus angka.")
             return
     grant_access(target, days)
-    if days is None:
-        msg = f"✅ User `{target}` diberi akses **permanent**."
-    else:
-        msg = f"✅ User `{target}` diberi akses **{days} hari**."
-    await update.message.reply_text(msg, parse_mode='Markdown')
+    msg = f"✅ User `{target}` diberi akses **{'permanent' if days is None else f'{days} hari'}**."
+    await update.message.reply_text(msg, parse_mode="Markdown")
     try:
         await context.bot.send_message(
             target,
             f"🎉 Akses kamu telah diperpanjang oleh admin.\n"
-            f"{'Permanent' if days is None else f'{days} hari'}.\n"
-            f"Ketik /start untuk mulai."
+            f"{'Permanent' if days is None else f'{days} hari'}.\nKetik /start."
         )
     except Exception:
         pass
@@ -1542,7 +1552,7 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Format: `/revoke <user_id>`", parse_mode='Markdown')
+        await update.message.reply_text("Format: `/revoke <user_id>`", parse_mode="Markdown")
         return
     try:
         target = int(args[0])
@@ -1550,7 +1560,7 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ User ID harus angka.")
         return
     revoke_access(target)
-    await update.message.reply_text(f"✅ Akses user `{target}` telah dicabut.", parse_mode='Markdown')
+    await update.message.reply_text(f"✅ Akses user `{target}` dicabut.", parse_mode="Markdown")
     try:
         await context.bot.send_message(target, "🔒 Akses kamu telah dicabut oleh admin.")
     except Exception:
@@ -1558,13 +1568,12 @@ async def cmd_revoke(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_cekakses(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        # User biasa bisa cek status sendiri
-        ok, status = has_access(update.effective_user.id)
-        await update.message.reply_text(f"Status akses kamu: `{status}`", parse_mode='Markdown')
+        _, status = has_access(update.effective_user.id)
+        await update.message.reply_text(f"Status akses kamu: `{status}`", parse_mode="Markdown")
         return
     args = context.args
     if not args:
-        await update.message.reply_text("Format: `/cekakses <user_id>`", parse_mode='Markdown')
+        await update.message.reply_text("Format: `/cekakses <user_id>`", parse_mode="Markdown")
         return
     try:
         target = int(args[0])
@@ -1572,67 +1581,186 @@ async def cmd_cekakses(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ User ID harus angka.")
         return
     ensure_user_access(target)
-    ok, status = has_access(target)
+    _, status = has_access(target)
     info = load_access().get(str(target), {})
     await update.message.reply_text(
         f"👤 User: `{target}`\n"
         f"Status: `{status}`\n"
         f"Tipe: `{info.get('type', '-')}`\n"
-        f"Join: `{info.get('joined_at', '-')[:10]}`\n"
+        f"Join: `{str(info.get('joined_at', '-'))[:10]}`\n"
         f"Until: `{info.get('access_until') or 'Permanent'}`",
-        parse_mode='Markdown'
+        parse_mode="Markdown"
     )
 
-# --- MAIN ---
+# =========================================================
+# CANCEL & FALLBACK
+# =========================================================
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("❌ Dibatalkan. Ketik /start untuk kembali ke menu.")
+    return ConversationHandler.END
+
+async def fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❓ Perintah tidak dikenali. Ketik /start untuk melihat daftar perintah.")
+    return MENU
+
+# =========================================================
+# MAIN
+# =========================================================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Admin access commands (di luar conversation)
+    # Admin commands (luar conversation)
     app.add_handler(CommandHandler("grant", cmd_grant))
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("cekakses", cmd_cekakses))
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+    # Set mode di setiap entry point
+    async def entry_to_vcf(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "to_vcf"
+        return await cmd_to_vcf(u, c)
+
+    async def entry_to_txt(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "to_txt"
+        return await cmd_to_txt(u, c)
+
+    async def entry_add(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "add"
+        return await cmd_add(u, c)
+
+    async def entry_delete(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "delete"
+        return await cmd_delete(u, c)
+
+    async def entry_renamectc(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "renamectc"
+        return await cmd_renamectc(u, c)
+
+    async def entry_renamefile(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "renamefile"
+        return await cmd_renamefile(u, c)
+
+    async def entry_merge(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "merge"
+        return await cmd_merge(u, c)
+
+    async def entry_split(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "split"
+        return await cmd_split(u, c)
+
+    async def entry_count(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "count"
+        return await cmd_count(u, c)
+
+    async def entry_nodup(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "nodup"
+        return await cmd_nodup(u, c)
+
+    async def entry_getname(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "getname"
+        return await cmd_getname(u, c)
+
+    async def entry_getconten(u, c):
+        c.user_data.clear()
+        c.user_data["mode"] = "getconten"
+        return await cmd_getconten(u, c)
+
+    conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start),
+            CommandHandler("to_vcf", entry_to_vcf),
+            CommandHandler("to_txt", entry_to_txt),
+            CommandHandler("admin", cmd_admin),
+            CommandHandler("manual", cmd_manual),
+            CommandHandler("add", entry_add),
+            CommandHandler("delete", entry_delete),
+            CommandHandler("renamectc", entry_renamectc),
+            CommandHandler("renamefile", entry_renamefile),
+            CommandHandler("merge", entry_merge),
+            CommandHandler("split", entry_split),
+            CommandHandler("count", entry_count),
+            CommandHandler("nodup", entry_nodup),
+            CommandHandler("getname", entry_getname),
+            CommandHandler("generate", cmd_generate),
+            CommandHandler("getconten", entry_getconten),
+            CommandHandler("setting", cmd_setting),
+            CommandHandler("status", cmd_status),
+        ],
         states={
             MENU: [
-                CallbackQueryHandler(manual_aksi, pattern='^manual_'),
-                CallbackQueryHandler(cek_aksi, pattern='^cek_'),
-                CallbackQueryHandler(menu_pilihan),
-                MessageHandler(filters.Document.ALL, handle_file),
+                CallbackQueryHandler(manual_callback, pattern="^manual_"),
+                CallbackQueryHandler(admin_callback, pattern="^admin_"),
+                CallbackQueryHandler(admin_pilih, pattern="^an_"),
+                MessageHandler(filters.Document.ALL, handle_document),
             ],
-            TXT_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, txt_nama_file)],
-            TXT_NAMA_KONTAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, txt_nama_kontak)],
-            TXT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, txt_limit)],
+            # to_vcf
+            TO_VCF_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            TO_VCF_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, to_vcf_nama_file)],
+            TO_VCF_NAMA_KONTAK: [MessageHandler(filters.TEXT & ~filters.COMMAND, to_vcf_nama_kontak)],
+            TO_VCF_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, to_vcf_limit)],
+            # to_txt
+            TO_TXT_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            # admin & navy
+            ADMIN_NAMA_GRUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nama_grup)],
+            ADMIN_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nomor)],
+            ADMIN_PILIH: [CallbackQueryHandler(admin_pilih, pattern="^an_")],
+            ADMIN_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nama_file)],
+            # manual
             MANUAL_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nama)],
             MANUAL_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, manual_nomor)],
+            # add
+            ADD_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            ADD_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_nomor)],
+            # delete
+            DELETE_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            DELETE_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, delete_nomor)],
+            # renamectc
+            RENAME_CTC_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            RENAME_CTC_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, rename_ctc_nama)],
+            # renamefile
+            RENAME_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            RENAME_FILE_NEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, rename_file_new)],
+            # merge
             MERGE_FILE: [
-                MessageHandler(filters.Document.ALL, handle_file),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, merge_selesai)
+                MessageHandler(filters.Document.ALL, handle_document),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, merge_selesai),
             ],
-            EDIT_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_nama)],
-            EDIT_PREFIX: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_prefix)],
-            EDIT_FILENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_filename)],
-            SPLIT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, split_vcf)],
-            TXT_SPLIT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, proses_split_txt)],
-            # Fitur Admin & Navy
-            ADMIN_NAVY_NAMA_GRUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, an_nama_grup)],
-            ADMIN_NAVY_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, an_nomor)],
-            ADMIN_NAVY_PILIH: [CallbackQueryHandler(an_pilih, pattern='^an_')],
-            ADMIN_NAVY_FILE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, an_nama_file)],
-            # Fitur Broadcast (Admin only)
+            # split
+            SPLIT_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            SPLIT_LIMIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, split_limit)],
+            # count / nodup / getname / getconten
+            COUNT_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            NODUP_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            GETNAME_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            GETCONTEN_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
+            # generate
+            GENERATE_NAMA: [MessageHandler(filters.TEXT & ~filters.COMMAND, generate_nama)],
+            GENERATE_JUMLAH: [MessageHandler(filters.TEXT & ~filters.COMMAND, generate_jumlah)],
+            # broadcast
             BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_message)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             CommandHandler("start", start),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_text)
-        ]
+            MessageHandler(filters.TEXT & ~filters.COMMAND, fallback),
+        ],
+        allow_reentry=True,
     )
 
-    app.add_handler(conv_handler)
-    print("Bot CV Kurumi berjalan...")
-    app.run_polling()
+    app.add_handler(conv)
+    print("Bot CV Kurumi (Command Mode) siap jalan...")
+    app.run_polling(drop_pending_updates=True)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
