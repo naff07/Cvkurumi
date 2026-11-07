@@ -19,7 +19,7 @@ from telegram.ext import (
 # =========================================================
 # KONFIGURASI
 # =========================================================
-BOT_TOKEN = "8813112237:AAHL20Of8SRq2fmtv3gQyn_1HLn9PXF1QRM"
+BOT_TOKEN = "8800432411:AAELcmFbgzYv1bK1zTLN3ZK2ZTp8VxvWi7k"
 ADMIN_ID = 7585723733
 
 USERS_FILE = "users.txt"
