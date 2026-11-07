@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
     GETCONTEN_FILE,
     # broadcast
     BROADCAST_MESSAGE,
-) = range(31)
+) = range(33)
 
 # =========================================================
 # KODE NEGARA
@@ -581,18 +581,23 @@ async def cmd_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     _, status = has_access(uid)
     fs = "ON ✅" if is_force_sub_enabled() else "OFF ❌"
+    users = load_users()
+    total_user = len(users)
     text = (
         f"⚙️ **Menu Pengaturan** (`/setting`)\n\n"
         f"• Status akses : `{status}`\n"
         f"• Force Subscribe : {fs}\n"
-        f"• Trial default : `{TRIAL_DAYS}` hari\n\n"
+        f"• Trial default : `{TRIAL_DAYS}` hari\n"
+        f"• Total user bot : `{total_user}`\n\n"
     )
     if uid == ADMIN_ID:
         text += (
             "**Admin commands:**\n"
-            "`/grant <user_id> [hari]`\n"
-            "`/revoke <user_id>`\n"
-            "`/cekakses <user_id>`"
+            "`/grant <user_id> [hari]` — beri akses\n"
+            "`/revoke <user_id>` — cabut akses\n"
+            "`/cekakses <user_id>` — cek akses user\n"
+            "`/cekuser` — daftar semua user (ID + username)\n"
+            "`/broadcast` — kirim pesan ke semua user"
         )
     else:
         text += "Hubungi admin untuk perpanjang akses."
@@ -603,16 +608,67 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     _, status = has_access(uid)
     info = load_access().get(str(uid), {})
+    tipe = "Admin" if uid == ADMIN_ID else info.get("type", "-")
+    until = "Permanent ∞" if uid == ADMIN_ID else (info.get("access_until") or "Permanent")
     text = (
         f"📊 **Status Akun** (`/status`)\n\n"
         f"• User ID : `{uid}`\n"
         f"• Status  : `{status}`\n"
-        f"• Tipe    : `{info.get('type', '-')}`\n"
+        f"• Tipe    : `{tipe}`\n"
         f"• Join    : `{str(info.get('joined_at', '-'))[:10]}`\n"
-        f"• Until   : `{info.get('access_until') or 'Permanent'}`"
+        f"• Until   : `{until}`"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
     return MENU
+
+async def cmd_cekuser(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin only: tampilkan daftar user ID + username"""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Hanya admin.")
+        return MENU
+
+    users = load_users()  # {id: username}
+    total = len(users)
+    fs = "Aktif ✅" if is_force_sub_enabled() else "Nonaktif ❌"
+
+    await update.message.reply_text(
+        f"👥 **Statistik User Bot**\n\n"
+        f"• Total user : `{total}`\n"
+        f"• Force Sub  : {fs}",
+        parse_mode="Markdown"
+    )
+
+    if total == 0:
+        await update.message.reply_text("Belum ada user yang tersimpan.")
+        return MENU
+
+    # Buat file daftar
+    lines = ["user_id | username"]
+    for uid, uname in sorted(users.items()):
+        lines.append(f"{uid} | @{uname}" if uname != "-" else f"{uid} | -")
+    list_file = "daftar_user.txt"
+    with open(list_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    await context.bot.send_document(
+        chat_id=update.effective_chat.id,
+        document=open(list_file, "rb"),
+        caption=f"📄 Daftar {total} User (ID + Username)"
+    )
+    os.remove(list_file)
+    return MENU
+
+async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin only: mulai broadcast lewat perintah /broadcast"""
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Hanya admin.")
+        return MENU
+    await update.message.reply_text(
+        "📢 **Broadcast**\n\n"
+        "Kirim pesan yang ingin disiarkan ke **semua user** bot ini.\n"
+        "Ketik /cancel untuk batal."
+    )
+    return BROADCAST_MESSAGE
 
 # =========================================================
 # HANDLER FILE & STATE
@@ -1344,6 +1400,50 @@ async def proses_getconten(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # --- ADMIN & NAVY ---
+async def _simpan_grup_dan_tampilkan(update_or_query, context, from_callback=False):
+    """Simpan grup saat ini lalu tampilkan ringkasan + tombol lanjut."""
+    numbers = context.user_data.get("an_current_numbers", [])
+    if not numbers:
+        msg = "❌ Belum ada nomor di grup ini."
+        if from_callback:
+            await update_or_query.answer(msg, show_alert=True)
+        else:
+            await update_or_query.message.reply_text(msg)
+        return ADMIN_NOMOR
+
+    context.user_data.setdefault("an_groups", []).append({
+        "name": context.user_data["an_current_name"],
+        "numbers": numbers.copy()
+    })
+    context.user_data["an_current_numbers"] = []
+
+    total_g = len(context.user_data["an_groups"])
+    total_n = sum(len(g["numbers"]) for g in context.user_data["an_groups"])
+    ringkas = "".join(
+        f"• **{g['name']}** → {len(g['numbers'])} nomor\n"
+        for g in context.user_data["an_groups"]
+    )
+    kb = [
+        [InlineKeyboardButton("➕ Tambah Grup Lagi", callback_data="an_tambah")],
+        [InlineKeyboardButton("✅ Buat 1 File VCF", callback_data="an_buat")],
+    ]
+    text = (
+        f"✅ Grup **{context.user_data['an_current_name']}** disimpan "
+        f"({len(numbers)} nomor).\n\n"
+        f"📋 **Ringkasan:**\n{ringkas}\n"
+        f"Total: **{total_g} grup** | **{total_n} nomor**"
+    )
+    if from_callback:
+        await update_or_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown"
+        )
+    else:
+        await update_or_query.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown"
+        )
+    return ADMIN_PILIH
+
+
 async def admin_nama_grup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nama = update.message.text.strip()
     if not nama:
@@ -1353,65 +1453,88 @@ async def admin_nama_grup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["an_current_numbers"] = []
     await update.message.reply_text(
         f"✅ Nama grup: **{nama}**\n\n"
-        "Kirim nomor (bisa banyak).\n"
-        "Ketik `selesai` jika grup ini sudah cukup.",
+        "Kirim nomor (bisa banyak sekaligus).\n"
+        "Setelah selesai, tekan tombol **✅ Selesai Grup Ini**.",
         parse_mode="Markdown"
     )
     return ADMIN_NOMOR
+
 
 async def admin_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text.lower() == "selesai":
-        numbers = context.user_data.get("an_current_numbers", [])
-        if not numbers:
-            await update.message.reply_text("❌ Belum ada nomor.")
-            return ADMIN_NOMOR
-        context.user_data.setdefault("an_groups", []).append({
-            "name": context.user_data["an_current_name"],
-            "numbers": numbers.copy()
-        })
-        total_g = len(context.user_data["an_groups"])
-        total_n = sum(len(g["numbers"]) for g in context.user_data["an_groups"])
-        ringkas = "".join(f"• **{g['name']}** → {len(g['numbers'])} nomor\n" for g in context.user_data["an_groups"])
-        kb = [
-            [InlineKeyboardButton("➕ Tambah Grup Lagi", callback_data="an_tambah")],
-            [InlineKeyboardButton("✅ Buat 1 File VCF", callback_data="an_buat")],
-        ]
-        await update.message.reply_text(
-            f"✅ Grup **{context.user_data['an_current_name']}** disimpan ({len(numbers)} nomor).\n\n"
-            f"📋 **Ringkasan:**\n{ringkas}\n"
-            f"Total: **{total_g} grup** | **{total_n} nomor**",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown"
-        )
-        return ADMIN_PILIH
+
+    # Masih izinkan ketik "selesai" sebagai alternatif
+    if text.lower() in ("selesai", "done", "finish"):
+        return await _simpan_grup_dan_tampilkan(update, context, from_callback=False)
 
     baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
     if not baru:
-        await update.message.reply_text("❌ Tidak ada nomor valid.")
+        await update.message.reply_text(
+            "❌ Tidak ada nomor valid.\n"
+            "Kirim nomor, atau tekan tombol **✅ Selesai Grup Ini** di bawah."
+        )
+        # Tetap tampilkan tombol supaya user bisa selesai tanpa ketik
+        kb = [[InlineKeyboardButton("✅ Selesai Grup Ini", callback_data="an_selesai_grup")]]
+        if context.user_data.get("an_current_numbers"):
+            await update.message.reply_text(
+                f"Total saat ini: **{len(context.user_data['an_current_numbers'])}** nomor",
+                reply_markup=InlineKeyboardMarkup(kb),
+                parse_mode="Markdown"
+            )
         return ADMIN_NOMOR
-    context.user_data["an_current_numbers"].extend(baru)
+
+    context.user_data.setdefault("an_current_numbers", []).extend(baru)
     total = len(context.user_data["an_current_numbers"])
+
+    kb = [
+        [InlineKeyboardButton("➕ Kirim Nomor Lagi", callback_data="an_tambah_nomor")],
+        [InlineKeyboardButton("✅ Selesai Grup Ini", callback_data="an_selesai_grup")],
+    ]
     await update.message.reply_text(
-        f"✅ Ditambah {len(baru)} nomor. Total di grup ini: **{total}**\n"
-        "Kirim lagi atau ketik `selesai`.",
+        f"✅ Ditambah **{len(baru)}** nomor. Total di grup ini: **{total}**\n"
+        "Kirim nomor lagi, atau tekan **✅ Selesai Grup Ini**.",
+        reply_markup=InlineKeyboardMarkup(kb),
         parse_mode="Markdown"
     )
     return ADMIN_NOMOR
+
 
 async def admin_pilih(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+
+    if query.data == "an_tambah_nomor":
+        await query.edit_message_text("Kirim nomor lagi (bisa banyak):")
+        return ADMIN_NOMOR
+
+    if query.data == "an_selesai_grup":
+        return await _simpan_grup_dan_tampilkan(query, context, from_callback=True)
+
     if query.data == "an_tambah":
         await query.edit_message_text("Ketik **Nama Grup** berikutnya:")
         return ADMIN_NAMA_GRUP
+
     if query.data == "an_buat":
-        await query.edit_message_text("📝 Ketik **Nama File** (tanpa .vcf):")
+        await query.edit_message_text(
+            "📝 Ketik **Nama File** (tanpa .vcf)\n"
+            "Contoh: `Admin_Navy_Final`"
+        )
         return ADMIN_NAMA_FILE
+
     return ADMIN_PILIH
 
+
 async def admin_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nama = safe_filename(update.message.text.strip())
+    raw = update.message.text.strip()
+    # Tolak kalau user ketik "selesai" lagi sebagai nama file
+    if raw.lower() in ("selesai", "done", "finish", "ya", "ok"):
+        await update.message.reply_text(
+            "❌ Itu bukan nama file.\n"
+            "Ketik nama file yang diinginkan, contoh: `Admin_Navy_Final`"
+        )
+        return ADMIN_NAMA_FILE
+
+    nama = safe_filename(raw)
     if not nama:
         await update.message.reply_text("❌ Nama file tidak boleh kosong.")
         return ADMIN_NAMA_FILE
@@ -1432,14 +1555,18 @@ async def admin_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"FN:{g['name']} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
                 )
 
+    # Caption sederhana sesuai permintaan
+    ringkas_lines = [f"{g['name']} {len(g['numbers'])} kontak" for g in groups]
+    ringkas = "\n".join(ringkas_lines)
     total = sum(len(g["numbers"]) for g in groups)
-    ringkas = "".join(f"• {g['name']}: {len(g['numbers'])} kontak\n" for g in groups)
+
     await context.bot.send_document(
         chat_id=update.effective_chat.id,
         document=open(nama, "rb"),
         caption=(
-            f"✅ **1 File VCF siap!**\n📁 `{nama}`\n\n"
-            f"{ringkas}\n👥 Total: **{len(groups)} grup** | **{total} kontak**"
+            f"✅ VCF siap — `{nama}`\n\n"
+            f"{ringkas}\n\n"
+            f"Total: {len(groups)} grup | {total} kontak"
         ),
         parse_mode="Markdown"
     )
@@ -1669,6 +1796,7 @@ def main():
     app.add_handler(CommandHandler("grant", cmd_grant))
     app.add_handler(CommandHandler("revoke", cmd_revoke))
     app.add_handler(CommandHandler("cekakses", cmd_cekakses))
+    app.add_handler(CommandHandler("cekuser", cmd_cekuser))
 
     # Set mode di setiap entry point
     async def entry_to_vcf(u, c):
@@ -1751,6 +1879,7 @@ def main():
             CommandHandler("getconten", entry_getconten),
             CommandHandler("setting", cmd_setting),
             CommandHandler("status", cmd_status),
+            CommandHandler("broadcast", cmd_broadcast_start),
         ],
         states={
             MENU: [
@@ -1767,7 +1896,10 @@ def main():
             TO_TXT_FILE: [MessageHandler(filters.Document.ALL, handle_document)],
             # admin & navy
             ADMIN_NAMA_GRUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nama_grup)],
-            ADMIN_NOMOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nomor)],
+            ADMIN_NOMOR: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nomor),
+                CallbackQueryHandler(admin_pilih, pattern="^an_"),
+            ],
             ADMIN_PILIH: [CallbackQueryHandler(admin_pilih, pattern="^an_")],
             ADMIN_NAMA_FILE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_nama_file)],
             # manual (nomor → nama kontak → nama file)
