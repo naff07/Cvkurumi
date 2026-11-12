@@ -76,7 +76,7 @@ logger = logging.getLogger(__name__)
     GETCONTEN_FILE,
     # broadcast
     BROADCAST_MESSAGE,
-) = range(33)
+) = range(31)
 
 # =========================================================
 # KODE NEGARA
