@@ -19,7 +19,7 @@ from telegram.ext import (
 # =========================================================
 # KONFIGURASI
 # =========================================================
-BOT_TOKEN = "8800432411:AAELcmFbgzYv1bK1zTLN3ZK2ZTp8VxvWi7k"
+BOT_TOKEN = "8813112237:AAGQhvZ_c-r8QmPH6cLge3jA_mLk4h-av0E"
 ADMIN_ID = 7585723733
 
 USERS_FILE = "users.txt"
@@ -268,60 +268,161 @@ async def is_user_joined(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             belum.append(gid)
     return belum
 
+# Pre-sort country codes sekali saja (panjang dulu) biar deteksi lebih cepat
+_COUNTRY_CODES_SORTED = sorted(COUNTRY_CODES.keys(), key=len, reverse=True)
+
+# Regex nomor: tangkap deretan digit (dengan +, spasi, strip, titik opsional di antaranya)
+_RE_PHONE_CANDIDATE = re.compile(
+    r"(?:\+?\d[\d\s\-().]{6,}\d)"
+)
+# Hanya digit
+_RE_DIGITS = re.compile(r"\d+")
+
+
 def detect_country(nomor: str) -> str:
-    for code in sorted(COUNTRY_CODES.keys(), key=len, reverse=True):
+    for code in _COUNTRY_CODES_SORTED:
         if nomor.startswith(code):
             return COUNTRY_CODES[code]
     return "Tidak diketahui ❓"
 
+
 def clean_number(text: str) -> str:
-    return "".join(filter(str.isdigit, text))
+    """Ambil digit saja dari teks. Handle float Excel (1.234e10) juga."""
+    if text is None:
+        return ""
+    s = str(text).strip()
+    if not s:
+        return ""
+
+    # Excel kadang simpan nomor panjang sebagai scientific notation
+    if "e" in s.lower() or "E" in s:
+        try:
+            # contoh: 6.28123456789e10 → 628123456789
+            val = float(s.replace(",", "."))
+            if val == int(val) and val > 1e7:
+                s = str(int(val))
+        except (ValueError, OverflowError):
+            pass
+
+    return "".join(ch for ch in s if ch.isdigit())
+
+
+def normalize_number(n: str) -> str:
+    """
+    Normalisasi nomor:
+    - buang leading 00 → ganti jadi tidak perlu
+    - 08xxxx (Indonesia lokal) biarkan; user bisa ganti prefix lewat edit
+    - minimal 8 digit, maksimal 15 (standar E.164)
+    """
+    if not n:
+        return ""
+    # Buang leading zeros berlebih tapi jangan hapus semua
+    # Contoh: 0062... → 62...
+    if n.startswith("00") and len(n) > 10:
+        n = n[2:]
+    if len(n) < 8 or len(n) > 15:
+        return ""
+    return n
+
 
 def extract_numbers_from_text(text: str) -> list[str]:
+    """Ekstrak semua nomor dari teks bebas (bisa banyak per baris)."""
     result = []
-    for line in text.splitlines():
-        n = clean_number(line)
-        if len(n) >= 8:
+    if not text:
+        return result
+
+    # Coba kandidat mirip nomor telepon dulu
+    for match in _RE_PHONE_CANDIDATE.finditer(text):
+        n = normalize_number(clean_number(match.group(0)))
+        if n:
             result.append(n)
+
+    # Fallback: tiap baris digabung digitnya (untuk format 1 nomor per baris)
+    if not result:
+        for line in text.splitlines():
+            n = normalize_number(clean_number(line))
+            if n:
+                result.append(n)
+
     return result
 
+
 def extract_numbers_from_file(path: str, ext: str) -> list[str]:
-    numbers = []
+    """Ekstrak nomor dari txt / xlsx / csv dengan parsing lebih tangguh."""
+    numbers: list[str] = []
+
     if ext == "txt":
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                n = clean_number(line)
-                if len(n) >= 8:
-                    numbers.append(n)
+            content = f.read()
+        numbers = extract_numbers_from_text(content)
+
     elif ext == "xlsx":
-        wb = openpyxl.load_workbook(path, data_only=True)
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
         sheet = wb.active
         for row in sheet.iter_rows(values_only=True):
             for cell in row:
-                if cell is not None:
-                    n = clean_number(str(cell))
-                    if len(n) >= 8:
-                        numbers.append(n)
+                if cell is None:
+                    continue
+                # Angka murni dari Excel
+                if isinstance(cell, (int, float)):
+                    try:
+                        n = normalize_number(str(int(cell)))
+                        if n:
+                            numbers.append(n)
+                            continue
+                    except (ValueError, OverflowError):
+                        pass
+                # Teks / campuran
+                for n in extract_numbers_from_text(str(cell)):
+                    numbers.append(n)
+        wb.close()
+
     elif ext == "csv":
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            reader = csv.reader(f)
+            # Coba deteksi delimiter sederhana
+            sample = f.read(4096)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+            except csv.Error:
+                dialect = csv.excel
+            reader = csv.reader(f, dialect)
             for row in reader:
                 for cell in row:
-                    n = clean_number(str(cell))
-                    if len(n) >= 8:
+                    if not cell:
+                        continue
+                    for n in extract_numbers_from_text(str(cell)):
                         numbers.append(n)
+
     return numbers
 
+
 def parse_vcards(content: str) -> list[str]:
-    return re.findall(r"BEGIN:VCARD.*?END:VCARD", content, re.DOTALL | re.IGNORECASE)
+    """Parse blok VCARD; lebih toleran terhadap spasi/baris."""
+    return re.findall(
+        r"BEGIN\s*:\s*VCARD.*?END\s*:\s*VCARD",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+
 
 def get_fn(vcard: str) -> str:
-    m = re.search(r"FN:(.*)", vcard, re.IGNORECASE)
-    return m.group(1).strip() if m else "Unknown"
+    m = re.search(r"FN\s*:\s*(.*)", vcard, re.IGNORECASE)
+    if not m:
+        return "Unknown"
+    # Hilangkan parameter vCard aneh di akhir baris
+    return m.group(1).split("\n")[0].strip()
+
 
 def get_tel(vcard: str) -> str:
-    m = re.search(r"TEL.*?:(.*)", vcard, re.IGNORECASE)
-    return clean_number(m.group(1)) if m else ""
+    """Ambil nomor dari baris TEL (dukung beberapa format vCard)."""
+    # TEL;TYPE=CELL:+62...  /  TEL;CELL:62...  /  TEL:+62...
+    matches = re.findall(r"TEL(?:;[^:]*)?:(.*)", vcard, re.IGNORECASE)
+    for raw in matches:
+        n = normalize_number(clean_number(raw))
+        if n:
+            return n
+    return ""
 
 def safe_filename(name: str) -> str:
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()
@@ -469,10 +570,9 @@ async def cmd_manual(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     context.user_data["manual_data"] = []
     await update.message.reply_text(
-        "✍️ **Input Manual** (`/manual`)\n\n"
-        "Kirim **nomor** terlebih dahulu (bisa banyak sekaligus).\n"
-        "Contoh:\n`628111111111`\natau\n`628111 628222 628333`\n\n"
-        "Kalau sudah cukup, ketik `selesai`."
+        "✍️ **Input Manual**\n\n"
+        "Kirim nomor (bisa banyak sekaligus).\n"
+        "Contoh: `628111111111` atau `628111 628222 628333`"
     )
     return MANUAL_NOMOR
 
@@ -564,7 +664,7 @@ async def cmd_generate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MENU
     await update.message.reply_text(
         "⚙️ **Generate Nama** (`/generate`)\n\n"
-        "Ketik pola nama (contoh: `Kontak_NAFF` atau `Admin`):"
+        "Ketik pola nama (contoh: `Kontak_shopee` atau `Admin`):"
     )
     return GENERATE_NAMA
 
@@ -691,7 +791,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ext not in ("txt", "xlsx", "csv"):
             await update.message.reply_text("❌ Harus file .txt / .xlsx / .csv")
             return TO_VCF_FILE
-        await update.message.reply_text("Ketik **Nama File** (contoh: `Kontak_NAFF`):")
+        await update.message.reply_text("Ketik **Nama File** (contoh: `Kontak_shopee`):")
         return TO_VCF_NAMA_FILE
 
     # --- TO_TXT ---
@@ -799,7 +899,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================================================
 async def to_vcf_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["nama_file"] = safe_filename(update.message.text)
-    await update.message.reply_text("Ketik **Nama Kontak** (contoh: `NAFF`):")
+    await update.message.reply_text("Ketik **Nama Kontak** (contoh: `shopee`):")
     return TO_VCF_NAMA_KONTAK
 
 async def to_vcf_nama_kontak(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -842,6 +942,13 @@ async def proses_to_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     total_files = math.ceil(len(numbers) / limit)
+    total_kontak = len(numbers)
+
+    # Deteksi negara dari nomor unik
+    country_count = Counter()
+    for n in set(numbers):
+        country_count[detect_country(n)] += 1
+
     for i in range(total_files):
         chunk = numbers[i * limit : (i + 1) * limit]
         out_name = f"{nama_file} {i + 1}.vcf"
@@ -853,14 +960,27 @@ async def proses_to_vcf(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"FN:{nama_kontak} {urutan:03d}\n"
                     f"TEL;TYPE=CELL:+{n}\nEND:VCARD\n"
                 )
+        # Kirim file TANPA caption di bawahnya
         await context.bot.send_document(
             chat_id=update.effective_chat.id,
             document=open(out_name, "rb"),
-            caption=f"{nama_file} {i + 1} ({len(chunk)} kontak)"
         )
         os.remove(out_name)
 
-    await update.message.reply_text("🎉 Selesai! Ketik /start untuk menu lagi.")
+    # Ringkasan singkat setelah semua file terkirim
+    negara_lines = []
+    for negara, jml in country_count.most_common(8):
+        negara_lines.append(f"• {negara}: {jml}")
+    negara_text = "\n".join(negara_lines) if negara_lines else "• Tidak terdeteksi"
+
+    ringkasan = (
+        f"✅ **Selesai**\n"
+        f"📁 `{nama_file}`\n"
+        f"📄 {total_files} file • {total_kontak} kontak\n\n"
+        f"🌍 **Negara:**\n{negara_text}\n\n"
+        f"Ketik /start untuk menu lagi."
+    )
+    await update.message.reply_text(ringkasan, parse_mode="Markdown")
     context.user_data.clear()
 
 async def proses_to_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -896,41 +1016,31 @@ async def proses_to_txt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
 
 # --- MANUAL ---
-# Alur baru: nomor dulu → ketik "selesai" → nama kontak → nama file → buat VCF
+# Alur: nomor → langsung nama kontak → nama file → VCF (tanpa "selesai")
 
 async def manual_nomor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-
-    # User ketik selesai → lanjut ke nama kontak
-    if text.lower() == "selesai":
-        numbers = context.user_data.get("manual_data", [])
-        if not numbers:
-            await update.message.reply_text("❌ Belum ada nomor. Kirim minimal 1 nomor dulu.")
-            return MANUAL_NOMOR
-        await update.message.reply_text(
-            f"✅ Total **{len(numbers)}** nomor tersimpan.\n\n"
-            "Sekarang ketik **Nama Kontak** (contoh: `NAFF`):",
-            parse_mode="Markdown"
-        )
-        return MANUAL_NAMA
-
-    # Tambah nomor
-    baru = [clean_number(p) for p in re.split(r"[\s,;]+", text) if len(clean_number(p)) >= 8]
+    # Pakai parser optimasi
+    baru = extract_numbers_from_text(text)
     if not baru:
-        await update.message.reply_text(
-            "❌ Tidak ada nomor valid.\n"
-            "Kirim nomor (bisa banyak) atau ketik `selesai`."
-        )
+        # fallback sederhana
+        baru = [
+            normalize_number(clean_number(p))
+            for p in re.split(r"[\s,;]+", text)
+            if normalize_number(clean_number(p))
+        ]
+    if not baru:
+        await update.message.reply_text("❌ Tidak ada nomor valid. Kirim ulang nomor.")
         return MANUAL_NOMOR
 
-    context.user_data.setdefault("manual_data", []).extend(baru)
-    total = len(context.user_data["manual_data"])
+    context.user_data["manual_data"] = baru
     await update.message.reply_text(
-        f"✅ Ditambah **{len(baru)}** nomor. Total di sini: **{total}**\n"
-        "Kirim lagi atau ketik `selesai`.",
+        f"✅ {len(baru)} nomor tersimpan.\n\n"
+        "Ketik **Nama Kontak** (contoh: `shopee`):",
         parse_mode="Markdown"
     )
-    return MANUAL_NOMOR
+    return MANUAL_NAMA
+
 
 async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nama = update.message.text.strip()
@@ -939,12 +1049,11 @@ async def manual_nama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MANUAL_NAMA
     context.user_data["temp_nama"] = nama
     await update.message.reply_text(
-        f"✅ Nama kontak: **{nama}**\n\n"
-        "Sekarang ketik **Nama File** (tanpa .vcf)\n"
-        "Contoh: `Kontak_NAFF`",
-        parse_mode="Markdown"
+        "Ketik **Nama File** (tanpa .vcf)\n"
+        "Contoh: `Kontak_shopee`"
     )
     return MANUAL_NAMA_FILE
+
 
 async def manual_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nama_file = safe_filename(update.message.text.strip())
@@ -962,7 +1071,7 @@ async def manual_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not nama_file.lower().endswith(".vcf"):
         nama_file += ".vcf"
 
-    await update.message.reply_text("⏳ Membuat file VCF...")
+    await update.message.reply_text("⏳ Membuat VCF...")
 
     with open(nama_file, "w", encoding="utf-8") as f:
         for i, n in enumerate(numbers, 1):
@@ -971,14 +1080,24 @@ async def manual_nama_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"FN:{nama} {i:03d}\nTEL;TYPE=CELL:+{n}\nEND:VCARD\n"
             )
 
+    # Deteksi negara singkat
+    country_count = Counter(detect_country(n) for n in set(numbers))
+    negara = ", ".join(f"{k} ({v})" for k, v in country_count.most_common(3))
+
     await context.bot.send_document(
         chat_id=update.effective_chat.id,
         document=open(nama_file, "rb"),
-        caption=f"✅ {len(numbers)} kontak • `{nama_file}`",
-        parse_mode="Markdown"
     )
     os.remove(nama_file)
-    await update.message.reply_text("🎉 Selesai! Ketik /start untuk menu lagi.")
+
+    await update.message.reply_text(
+        f"✅ Selesai\n"
+        f"📁 `{nama_file}`\n"
+        f"👥 {len(numbers)} kontak\n"
+        f"🌍 {negara}\n\n"
+        f"Ketik /start untuk menu lagi.",
+        parse_mode="Markdown"
+    )
     context.user_data.clear()
     return MENU
 
